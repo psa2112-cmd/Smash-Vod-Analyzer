@@ -60,16 +60,16 @@ const NOTES_KEY = "smash-replay-match-notes";
 const LAYOUT_KEY = "smash-replay-workspace-layout";
 
 interface WorkspaceLayout {
-  vertical: number[];
-  lower: number[];
+  vertical: Record<string, number>;
+  lower: Record<string, number>;
   notesVisible: boolean;
   filtersVisible: boolean;
   isSwapped: boolean;
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
-  vertical: [43, 57],
-  lower: [45, 55],
+  vertical: { video: 43, review: 57 },
+  lower: { notes: 45, filters: 55 },
   notesVisible: true,
   filtersVisible: true,
   isSwapped: false,
@@ -196,7 +196,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
         />
 
         <ResizablePanelGroup
-          key={`vertical-${layout.vertical.join("-")}`}
+          key={`vertical-${JSON.stringify(layout.vertical)}`}
           orientation="vertical"
           defaultLayout={layout.vertical}
           onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, vertical: sizes })}
@@ -235,7 +235,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
                 <div className="min-h-0 border-t border-border">
                   {layout.notesVisible && layout.filtersVisible ? (
                     <ResizablePanelGroup
-                      key={`lower-${layout.lower.join("-")}-${layout.isSwapped}`}
+                      key={`lower-${JSON.stringify(layout.lower)}-${layout.isSwapped}`}
                       orientation="horizontal"
                       defaultLayout={layout.lower}
                       onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, lower: sizes })}

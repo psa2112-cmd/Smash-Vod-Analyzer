@@ -8,3 +8,7 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+## Project architecture
+
+- Keep replay-analysis UI, typed event data, and tests together under `src/features/analysis`; this isolates the core review workflow for testing and rollback.

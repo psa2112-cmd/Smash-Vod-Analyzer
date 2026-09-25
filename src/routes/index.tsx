@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { ReplayImportPanel, type ReplaySource } from "@/features/replay-import/ReplayImportPanel";
 
@@ -18,12 +18,13 @@ export const Route = createFileRoute("/")({
 
 function HomePage() {
   const [lastSource, setLastSource] = useState<ReplaySource | null>(null);
+  const navigate = useNavigate();
 
   const handleAnalyze = async (source: ReplaySource) => {
     console.info("[home] analyze requested", { kind: source.kind });
     await new Promise((resolve) => setTimeout(resolve, 600));
-    // Processing page is the next module; hand-off wired once approved.
     setLastSource(source);
+    await navigate({ to: "/analyze" });
   };
 
   return (

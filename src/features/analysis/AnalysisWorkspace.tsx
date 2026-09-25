@@ -7,7 +7,6 @@ import {
   Eye,
   EyeOff,
   Filter,
-  Gauge,
   ListFilter,
   Maximize2,
   Pause,

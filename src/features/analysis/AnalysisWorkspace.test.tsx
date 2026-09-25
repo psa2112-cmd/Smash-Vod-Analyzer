@@ -39,7 +39,7 @@ describe("AnalysisWorkspace", () => {
     await user.selectOptions(within(dialog).getByLabelText("Event type", { exact: true }), "Neutral Win");
     await user.type(within(dialog).getByLabelText("Event note", { exact: true }), "Held center stage.");
     await user.click(within(dialog).getByRole("button", { name: /save event/i }));
-    expect(screen.getByText("Held center stage.")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Held center stage.")).toBeInTheDocument();
   });
 
   it("edits notes and toggles workspace panels", async () => {

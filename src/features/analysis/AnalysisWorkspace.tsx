@@ -210,12 +210,13 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
           onReset={() => setAndSaveLayout(DEFAULT_LAYOUT)}
         />
 
+        <div className="h-[max(1250px,145vh)] shrink-0">
         <ResizablePanelGroup
           key={`vertical-${JSON.stringify(layout.vertical)}`}
           orientation="vertical"
           defaultLayout={layout.vertical}
           onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, vertical: sizes })}
-          className="h-[max(1250px,145vh)] min-h-0 shrink-0"
+          className="min-h-0"
         >
           <ResizablePanel id="video" minSize={200}>
             <VideoReviewPanel
@@ -290,6 +291,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
             </ResizablePanelGroup>
           </ResizablePanel>
         </ResizablePanelGroup>
+        </div>
 
         <ManualEventDialog
           open={isManualEventOpen}

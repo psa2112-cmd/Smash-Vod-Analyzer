@@ -68,7 +68,7 @@ describe("AnalysisWorkspace", () => {
   it("changes playback speed through a menu and toggles video controls", async () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);
-    await user.click(screen.getByRole("button", { name: /playback speed/i }));
+    await user.pointer([{ target: screen.getByRole("button", { name: /playback speed/i }), keys: "[MouseLeft>]" }, { keys: "[/MouseLeft]" }]);
     await user.click(screen.getByRole("menuitemradio", { name: /1.5×/i }));
     expect(screen.getByRole("button", { name: /playback speed/i })).toHaveTextContent("1.5×");
     await user.click(screen.getByRole("button", { name: /hide video controls/i }));

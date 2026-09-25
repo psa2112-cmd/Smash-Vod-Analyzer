@@ -439,7 +439,7 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
   return (
     <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
       <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />
-      <button type="button" onClick={onPlayToggle} aria-label={isPlaying ? "Pause replay (click video)" : "Play replay (click video)"} className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
+      <button type="button" onClick={onPlayToggle} aria-label="Toggle playback from video" className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
       <div className="pointer-events-none absolute inset-0 bg-video-shade" />
       <div className="absolute left-4 top-4 flex items-center gap-2">
         <Badge className="bg-background/85 text-foreground shadow-none">GAME 3</Badge>

@@ -79,7 +79,14 @@ function readStoredLayout(): WorkspaceLayout {
   if (typeof window === "undefined") return DEFAULT_LAYOUT;
   try {
     const stored = window.localStorage.getItem(LAYOUT_KEY);
-    return stored ? { ...DEFAULT_LAYOUT, ...(JSON.parse(stored) as Partial<WorkspaceLayout>) } : DEFAULT_LAYOUT;
+    if (!stored) return DEFAULT_LAYOUT;
+    const parsed = JSON.parse(stored) as Partial<WorkspaceLayout>;
+    return {
+      ...DEFAULT_LAYOUT,
+      ...parsed,
+      vertical: parsed.vertical && !Array.isArray(parsed.vertical) ? parsed.vertical : DEFAULT_LAYOUT.vertical,
+      lower: parsed.lower && !Array.isArray(parsed.lower) ? parsed.lower : DEFAULT_LAYOUT.lower,
+    };
   } catch {
     return DEFAULT_LAYOUT;
   }

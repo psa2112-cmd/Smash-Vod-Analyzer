@@ -81,7 +81,10 @@ describe("AnalysisWorkspace", () => {
   it("marks selected tags with the blue accent while editing", async () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);
-    await user.click(screen.getAllByRole("button", { name: "Edit tags" }).at(0) ?? screen.getByRole("button", { name: "Add event" }));
+    const firstTagEditor = screen.getAllByRole("button", { name: "Edit tags" })[0];
+    expect(firstTagEditor).toBeDefined();
+    if (!firstTagEditor) return;
+    await user.click(firstTagEditor);
     expect(screen.getByRole("button", { name: "Neutral", pressed: true })).toHaveClass("bg-primary");
   });
 });

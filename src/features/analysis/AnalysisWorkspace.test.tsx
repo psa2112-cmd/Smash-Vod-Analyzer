@@ -56,4 +56,31 @@ describe("AnalysisWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /show match notes/i }));
     expect(screen.getByLabelText("Match notes", { exact: true })).toBeInTheDocument();
   });
+
+  it("offers vertical resizing, page scrolling, and a fitted replay frame", () => {
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    expect(screen.getByRole("separator", { name: /resize video and review/i })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: /resize event table and lower panels/i })).toBeInTheDocument();
+    expect(screen.getByRole("main")).not.toHaveClass("h-screen", "overflow-hidden");
+    expect(screen.getByAltText(/replay frame/i)).toHaveClass("object-contain");
+  });
+
+  it("changes playback speed through a menu and toggles video controls", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: /playback speed/i }));
+    await user.click(screen.getByRole("menuitemradio", { name: /1.5×/i }));
+    expect(screen.getByRole("button", { name: /playback speed/i })).toHaveTextContent("1.5×");
+    await user.click(screen.getByRole("button", { name: /hide video controls/i }));
+    expect(screen.queryByRole("slider", { name: /video timeline/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /show video controls/i }));
+    expect(screen.getByRole("slider", { name: /video timeline/i })).toBeInTheDocument();
+  });
+
+  it("marks selected tags with the blue accent while editing", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getAllByRole("button", { name: "Edit tags" })[0]);
+    expect(screen.getByRole("button", { name: "Neutral", pressed: true })).toHaveClass("bg-primary");
+  });
 });

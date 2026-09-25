@@ -294,7 +294,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
 function WorkspaceHeader({ eventCount, layout, onBack, onAddEvent, onToggleNotes, onToggleFilters, onSwap, onReset }: {
   eventCount: number;
   layout: WorkspaceLayout;
-  onBack?: () => void;
+  onBack: (() => void) | undefined;
   onAddEvent: () => void;
   onToggleNotes: () => void;
   onToggleFilters: () => void;

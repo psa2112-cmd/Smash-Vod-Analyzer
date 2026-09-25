@@ -13,7 +13,7 @@ describe("AnalysisWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /sort by timestamp/i }));
     await user.click(screen.getByRole("button", { name: /sort by timestamp/i }));
     const rows = screen.getAllByRole("row").slice(1);
-    expect(within(rows[0]).getByText("0:18")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("0:18")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /jump to 0:18/i }));
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:17");

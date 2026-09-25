@@ -101,6 +101,9 @@ function saveLayout(layout: WorkspaceLayout) {
   if (typeof window !== "undefined") window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
 }
 
+const FRAME_SECONDS = 1 / 60;
+const VERTICAL_HANDLE_CLASS = "group h-2 w-full cursor-row-resize bg-border/40 transition-colors hover:bg-primary/50 data-[separator=active]:bg-primary/70 focus-visible:bg-primary/60 after:hidden";
+
 export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
   const [events, setEvents] = useState(INITIAL_ANALYSIS_EVENTS);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
@@ -137,6 +140,41 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
     }, 1000 / playbackRate);
     return () => window.clearInterval(timer);
   }, [isPlaying, playbackRate]);
+
+  const hotkeyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  hotkeyHandlerRef.current = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    const isTyping = !!target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+    if (isTyping || isManualEventOpen || event.altKey || event.metaKey) return;
+    const key = event.key.toLowerCase();
+    if (event.ctrlKey) {
+      const ctrlActions: Record<string, () => void> = {
+        m: () => setControlsVisible((visible) => !visible),
+        n: () => togglePanel("notes"),
+        b: () => togglePanel("filters"),
+      };
+      const action = ctrlActions[key];
+      if (!action) return;
+      event.preventDefault();
+      action();
+      return;
+    }
+    const seekOffsets: Record<string, number> = { j: -FRAME_SECONDS, k: FRAME_SECONDS, u: -1, i: 1, "7": -5, "8": 5 };
+    if (key === " ") {
+      event.preventDefault();
+      setIsPlaying((playing) => !playing);
+    } else if (key in seekOffsets) {
+      event.preventDefault();
+      const offset = seekOffsets[key] ?? 0;
+      setCurrentTime((time) => Math.min(VIDEO_DURATION, Math.max(0, time + offset)));
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => hotkeyHandlerRef.current(event);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const visibleEvents = useMemo(
     () => sortAnalysisEvents(applyEventFilters(events, filters), sortKey, sortDirection),
@@ -231,7 +269,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
               controlsVisible={controlsVisible}
             />
           </ResizablePanel>
-          <ResizableHandle withHandle aria-label="Resize video and review" />
+          <ResizableHandle aria-label="Resize video and review" className={VERTICAL_HANDLE_CLASS}><span aria-hidden className="h-1 w-12 rounded-full bg-muted-foreground/50 group-hover:bg-primary-foreground/70" /></ResizableHandle>
           <ResizablePanel id="review" minSize={580}>
             <ResizablePanelGroup
               key={`review-${JSON.stringify(layout.review)}-${layout.notesVisible}-${layout.filtersVisible}`}
@@ -255,7 +293,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
                 onAddEvent={() => setIsManualEventOpen(true)}
               />
               </ResizablePanel>
-              <ResizableHandle withHandle aria-label="Resize event table and lower panels" />
+              <ResizableHandle aria-label="Resize event table and lower panels" className={VERTICAL_HANDLE_CLASS}><span aria-hidden className="h-1 w-12 rounded-full bg-muted-foreground/50 group-hover:bg-primary-foreground/70" /></ResizableHandle>
               <ResizablePanel id="utilities" minSize={180}>
                 <div className="h-full min-h-0 border-t border-border">
                   {layout.notesVisible && layout.filtersVisible ? (
@@ -401,6 +439,7 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
   return (
     <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
       <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />
+      <button type="button" onClick={onPlayToggle} aria-label="Toggle playback from video" className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
       <div className="pointer-events-none absolute inset-0 bg-video-shade" />
       <div className="absolute left-4 top-4 flex items-center gap-2">
         <Badge className="bg-background/85 text-foreground shadow-none">GAME 3</Badge>

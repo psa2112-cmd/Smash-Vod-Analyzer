@@ -87,4 +87,22 @@ describe("AnalysisWorkspace", () => {
     await user.click(firstTagEditor);
     expect(screen.getByRole("button", { name: "Neutral", pressed: true })).toHaveClass("bg-primary");
   });
+
+  it("supports click-to-play and keyboard hotkeys", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: /toggle playback from video/i }));
+    expect(screen.getByRole("button", { name: /pause replay/i })).toBeInTheDocument();
+    await user.keyboard(" ");
+    expect(screen.getByRole("button", { name: /play replay/i })).toBeInTheDocument();
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard("8");
+    expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:22");
+    await user.keyboard("7u");
+    expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:16");
+    await user.keyboard("{Control>}m{/Control}");
+    expect(screen.queryByRole("button", { name: /play replay/i })).not.toBeInTheDocument();
+    await user.keyboard("{Control>}n{/Control}");
+    expect(screen.queryByLabelText("Match notes", { exact: true })).not.toBeInTheDocument();
+  });
 });

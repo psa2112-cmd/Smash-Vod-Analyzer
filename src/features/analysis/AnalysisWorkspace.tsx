@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -9,6 +9,7 @@ import {
   Filter,
   ListFilter,
   Maximize2,
+  Minimize2,
   Pause,
   Play,
   Plus,
@@ -24,6 +25,7 @@ import { Link } from "@tanstack/react-router";
 import gameplayImage from "@/assets/analysis-gameplay.jpg";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +63,7 @@ const LAYOUT_KEY = "smash-replay-workspace-layout";
 
 interface WorkspaceLayout {
   vertical: Record<string, number>;
+  review: Record<string, number>;
   lower: Record<string, number>;
   notesVisible: boolean;
   filtersVisible: boolean;
@@ -68,7 +71,8 @@ interface WorkspaceLayout {
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
-  vertical: { video: 43, review: 57 },
+  vertical: { video: 24, review: 76 },
+  review: { table: 60, utilities: 40 },
   lower: { notes: 45, filters: 55 },
   notesVisible: true,
   filtersVisible: true,
@@ -85,6 +89,7 @@ function readStoredLayout(): WorkspaceLayout {
       ...DEFAULT_LAYOUT,
       ...parsed,
       vertical: parsed.vertical && !Array.isArray(parsed.vertical) ? parsed.vertical : DEFAULT_LAYOUT.vertical,
+      review: parsed.review && !Array.isArray(parsed.review) ? parsed.review : DEFAULT_LAYOUT.review,
       lower: parsed.lower && !Array.isArray(parsed.lower) ? parsed.lower : DEFAULT_LAYOUT.lower,
     };
   } catch {
@@ -108,6 +113,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [notes, setNotes] = useState("");
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [isManualEventOpen, setIsManualEventOpen] = useState(false);
   const [manualEventType, setManualEventType] = useState<AnalysisEventType>("Neutral Win");
   const [manualNote, setManualNote] = useState("");
@@ -190,7 +196,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <main className="flex h-screen min-w-[1024px] flex-col overflow-hidden bg-background text-foreground">
+      <main className="flex min-h-screen min-w-[1024px] flex-col bg-background text-foreground">
         <WorkspaceHeader
           eventCount={events.length}
           layout={layout}
@@ -198,18 +204,21 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
           onAddEvent={() => setIsManualEventOpen(true)}
           onToggleNotes={() => togglePanel("notes")}
           onToggleFilters={() => togglePanel("filters")}
+          controlsVisible={controlsVisible}
+          onToggleControls={() => setControlsVisible((visible) => !visible)}
           onSwap={() => setAndSaveLayout({ ...layout, isSwapped: !layout.isSwapped })}
           onReset={() => setAndSaveLayout(DEFAULT_LAYOUT)}
         />
 
+        <div className="h-[calc(min(50vh,640px)/0.24)] shrink-0">
         <ResizablePanelGroup
           key={`vertical-${JSON.stringify(layout.vertical)}`}
           orientation="vertical"
           defaultLayout={layout.vertical}
           onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, vertical: sizes })}
-          className="min-h-0 flex-1"
+          className="min-h-0"
         >
-          <ResizablePanel id="video" minSize="28%">
+          <ResizablePanel id="video" minSize={200}>
             <VideoReviewPanel
               currentTime={currentTime}
               isPlaying={isPlaying}
@@ -219,11 +228,18 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
               onSeek={setCurrentTime}
               onVolumeChange={setVolume}
               onPlaybackRateChange={setPlaybackRate}
+              controlsVisible={controlsVisible}
             />
           </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel id="review" minSize="35%">
-            <div className="grid h-full min-h-0 grid-rows-[minmax(260px,1fr)_minmax(180px,0.55fr)]">
+          <ResizableHandle withHandle aria-label="Resize video and review" />
+          <ResizablePanel id="review" minSize={580}>
+            <ResizablePanelGroup
+              key={`review-${JSON.stringify(layout.review)}-${layout.notesVisible}-${layout.filtersVisible}`}
+              orientation="vertical"
+              defaultLayout={layout.review}
+              onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, review: sizes })}
+            >
+              <ResizablePanel id="table" minSize={260}>
               <EventTablePanel
                 events={visibleEvents}
                 totalCount={events.length}
@@ -238,8 +254,10 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
                 onDelete={(id) => setEvents((current) => current.filter((event) => event.id !== id))}
                 onAddEvent={() => setIsManualEventOpen(true)}
               />
-              {(layout.notesVisible || layout.filtersVisible) && (
-                <div className="min-h-0 border-t border-border">
+              </ResizablePanel>
+              <ResizableHandle withHandle aria-label="Resize event table and lower panels" />
+              <ResizablePanel id="utilities" minSize={180}>
+                <div className="h-full min-h-0 border-t border-border">
                   {layout.notesVisible && layout.filtersVisible ? (
                     <ResizablePanelGroup
                       key={`lower-${JSON.stringify(layout.lower)}-${layout.isSwapped}`}
@@ -269,10 +287,11 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
                     <FilterPanel filters={filters} events={events} onChange={setFilters} />
                   )}
                 </div>
-              )}
-            </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
           </ResizablePanel>
         </ResizablePanelGroup>
+        </div>
 
         <ManualEventDialog
           open={isManualEventOpen}
@@ -291,13 +310,15 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
   );
 }
 
-function WorkspaceHeader({ eventCount, layout, onBack, onAddEvent, onToggleNotes, onToggleFilters, onSwap, onReset }: {
+function WorkspaceHeader({ eventCount, layout, controlsVisible, onBack, onAddEvent, onToggleNotes, onToggleFilters, onToggleControls, onSwap, onReset }: {
   eventCount: number;
   layout: WorkspaceLayout;
+  controlsVisible: boolean;
   onBack: (() => void) | undefined;
   onAddEvent: () => void;
   onToggleNotes: () => void;
   onToggleFilters: () => void;
+  onToggleControls: () => void;
   onSwap: () => void;
   onReset: () => void;
 }) {
@@ -323,6 +344,9 @@ function WorkspaceHeader({ eventCount, layout, onBack, onAddEvent, onToggleNotes
       <div className="flex items-center gap-1">
         <Button size="sm" onClick={onAddEvent}><Plus /> Add event</Button>
         <div className="mx-2 h-6 w-px bg-border" />
+        <IconTip label={controlsVisible ? "Hide video controls" : "Show video controls"} onClick={onToggleControls}>
+          {controlsVisible ? <EyeOff /> : <Eye />}
+        </IconTip>
         <IconTip label={layout.notesVisible ? "Hide match notes" : "Show match notes"} onClick={onToggleNotes}>
           {layout.notesVisible ? <EyeOff /> : <Eye />}
         </IconTip>
@@ -347,26 +371,42 @@ function IconTip({ label, onClick, children }: { label: string; onClick: () => v
   );
 }
 
-function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
+function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, controlsVisible, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
   currentTime: number;
   isPlaying: boolean;
   playbackRate: number;
   volume: number;
+  controlsVisible: boolean;
   onPlayToggle: () => void;
   onSeek: (value: number) => void;
   onVolumeChange: (value: number) => void;
   onPlaybackRateChange: (value: number) => void;
 }) {
   const rates = [0.5, 0.75, 1, 1.25, 1.5];
+  const playerRef = useRef<HTMLElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const syncFullscreen = () => setIsFullscreen(document.fullscreenElement === playerRef.current);
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await playerRef.current?.requestFullscreen();
+    } catch (error) {
+      console.error("Could not change replay fullscreen mode", error);
+    }
+  };
   return (
-    <section aria-label="Video player" className="relative h-full min-h-0 overflow-hidden bg-card">
-      <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1600} height={900} className="h-full w-full object-cover" />
-      <div className="absolute inset-0 bg-video-shade" />
+    <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
+      <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />
+      <div className="pointer-events-none absolute inset-0 bg-video-shade" />
       <div className="absolute left-4 top-4 flex items-center gap-2">
         <Badge className="bg-background/85 text-foreground shadow-none">GAME 3</Badge>
         <Badge variant="outline" className="border-primary/40 bg-background/70 text-primary">Battlefield</Badge>
       </div>
-      <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 pt-12">
+      {controlsVisible && <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 pt-12">
         <Slider aria-label="Video timeline" value={[currentTime]} min={0} max={VIDEO_DURATION} step={1} onValueChange={(value) => onSeek(value[0] ?? 0)} />
         <div className="mt-3 flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={onPlayToggle} aria-label={isPlaying ? "Pause replay" : "Play replay"} className="bg-background/55 hover:bg-background/80">
@@ -376,15 +416,18 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, onPlay
           <Volume2 className="size-4 text-muted-foreground" aria-hidden />
           <Slider aria-label="Volume" className="w-24" value={[volume]} min={0} max={100} onValueChange={(value) => onVolumeChange(value[0] ?? 0)} />
           <div className="ml-auto flex items-center gap-1">
-            {rates.map((rate) => (
-              <Button key={rate} variant={playbackRate === rate ? "secondary" : "ghost"} size="sm" onClick={() => onPlaybackRateChange(rate)} className="h-7 px-2 font-mono text-[11px]">
-                {rate}×
-              </Button>
-            ))}
-            <Button variant="ghost" size="icon" aria-label="Fullscreen preview"><Maximize2 /></Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Playback speed" className="font-mono text-xs">{playbackRate}×</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup value={String(playbackRate)} onValueChange={(value) => onPlaybackRateChange(Number(value))}>
+                  {rates.map((rate) => <DropdownMenuRadioItem key={rate} value={String(rate)}>{rate}×</DropdownMenuRadioItem>)}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button variant="ghost" size="icon" onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit fullscreen preview" : "Fullscreen preview"}>{isFullscreen ? <Minimize2 /> : <Maximize2 />}</Button>
           </div>
         </div>
-      </div>
+      </div>}
     </section>
   );
 }
@@ -404,7 +447,7 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, sortKey
   onAddEvent: () => void;
 }) {
   return (
-    <section aria-label="Analysis event table" className="flex min-h-0 flex-col bg-background">
+    <section aria-label="Analysis event table" className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
         <div className="flex items-center gap-2">
           <Sparkles className="size-4 text-primary" aria-hidden />
@@ -480,7 +523,7 @@ function InlineTags({ tags, onChange }: { tags: string[]; onChange: (tags: strin
   return editing ? (
     <div className="flex flex-wrap gap-1 rounded border border-primary/40 bg-card p-1.5">
       {STARTER_TAGS.map((tag) => (
-        <Button key={tag} variant={tags.includes(tag) ? "secondary" : "ghost"} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => onChange(tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])}>{tag}</Button>
+         <Button key={tag} variant={tags.includes(tag) ? "default" : "ghost"} aria-pressed={tags.includes(tag)} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => onChange(tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])}>{tag}</Button>
       ))}
       <Button variant="ghost" size="icon" className="size-6" onClick={() => setEditing(false)} aria-label="Close tag editor"><X /></Button>
     </div>
@@ -563,7 +606,7 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
             <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={formatTimestamp(timestamp)} disabled className="mt-1 font-mono" /></label>
             <label className="text-xs font-medium text-muted-foreground">Event type<select aria-label="Event type" value={eventType} onChange={(event) => onEventTypeChange(event.target.value as AnalysisEventType)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring">{MANUAL_EVENT_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
           </div>
-          <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag) => <Button key={tag} type="button" variant={selectedTags.includes(tag) ? "secondary" : "outline"} size="sm" onClick={() => onTagsChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag])}>{tag}</Button>)}</div></fieldset>
+           <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag) => <Button key={tag} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => onTagsChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag])}>{tag}</Button>)}</div></fieldset>
           <label className="text-xs font-medium text-muted-foreground">Event note<Textarea aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={onSave}>Save event</Button></DialogFooter>

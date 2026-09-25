@@ -118,6 +118,10 @@
   background: linear-gradient(to bottom, transparent 40%, oklch(0.08 0.01 270 / 92%) 100%);
 }
 
+@utility bg-video-letterbox {
+  background: linear-gradient(90deg, var(--background), var(--card) 18%, var(--card) 82%, var(--background));
+}
+
 .dark {
   --background: oklch(0.129 0.042 264.695);
   --foreground: oklch(0.984 0.003 247.858);

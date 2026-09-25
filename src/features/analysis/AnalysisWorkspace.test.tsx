@@ -9,6 +9,7 @@ describe("AnalysisWorkspace", () => {
     render(<AnalysisWorkspace onBack={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: /sort by timestamp/i }));
+    await user.click(screen.getByRole("button", { name: /sort by timestamp/i }));
     const rows = screen.getAllByRole("row").slice(1);
     expect(within(rows[0]).getByText("0:18")).toBeInTheDocument();
 
@@ -21,10 +22,10 @@ describe("AnalysisWorkspace", () => {
     render(<AnalysisWorkspace onBack={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "Manual Events" }));
-    expect(screen.getByText("Missed Tech Chase")).toBeInTheDocument();
-    expect(screen.queryByText("Hit Received")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Missed Tech Chase").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Hit Received", { selector: "span" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /reset filters/i }));
-    expect(screen.getByText("Hit Received")).toBeInTheDocument();
+    expect(screen.getByText("Hit Received", { selector: "span" })).toBeInTheDocument();
   });
 
   it("adds a manual event at the current playhead", async () => {
@@ -32,8 +33,8 @@ describe("AnalysisWorkspace", () => {
     render(<AnalysisWorkspace onBack={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: /add event/i }));
-    await user.selectOptions(screen.getByLabelText(/event type/i), "Neutral Win");
-    await user.type(screen.getByLabelText(/event note/i), "Held center stage.");
+    await user.selectOptions(screen.getByLabelText("Event type", { exact: true }), "Neutral Win");
+    await user.type(screen.getByLabelText("Event note", { exact: true }), "Held center stage.");
     await user.click(screen.getByRole("button", { name: /save event/i }));
     expect(screen.getByText("Held center stage.")).toBeInTheDocument();
   });
@@ -42,14 +43,14 @@ describe("AnalysisWorkspace", () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);
 
-    const notes = screen.getByLabelText(/match notes/i);
+    const notes = screen.getByLabelText("Match notes", { exact: true });
     await user.clear(notes);
     await user.type(notes, "Stop jumping from the corner.");
     expect(screen.getByText(/saved locally/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /hide match notes/i }));
-    expect(screen.queryByLabelText(/match notes/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Match notes", { exact: true })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /show match notes/i }));
-    expect(screen.getByLabelText(/match notes/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Match notes", { exact: true })).toBeInTheDocument();
   });
 });

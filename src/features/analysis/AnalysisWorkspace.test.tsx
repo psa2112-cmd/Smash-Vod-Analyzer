@@ -6,7 +6,7 @@ import { AnalysisWorkspace } from "./AnalysisWorkspace";
 describe("AnalysisWorkspace", () => {
   it("sorts the event table and seeks from a timestamp", async () => {
     const user = userEvent.setup();
-    render(<AnalysisWorkspace />);
+    render(<AnalysisWorkspace onBack={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: /sort by timestamp/i }));
     const rows = screen.getAllByRole("row").slice(1);
@@ -18,7 +18,7 @@ describe("AnalysisWorkspace", () => {
 
   it("filters events and resets the result", async () => {
     const user = userEvent.setup();
-    render(<AnalysisWorkspace />);
+    render(<AnalysisWorkspace onBack={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "Manual Events" }));
     expect(screen.getByText("Missed Tech Chase")).toBeInTheDocument();
@@ -29,7 +29,7 @@ describe("AnalysisWorkspace", () => {
 
   it("adds a manual event at the current playhead", async () => {
     const user = userEvent.setup();
-    render(<AnalysisWorkspace />);
+    render(<AnalysisWorkspace onBack={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: /add event/i }));
     await user.selectOptions(screen.getByLabelText(/event type/i), "Neutral Win");
@@ -40,7 +40,7 @@ describe("AnalysisWorkspace", () => {
 
   it("edits notes and toggles workspace panels", async () => {
     const user = userEvent.setup();
-    render(<AnalysisWorkspace />);
+    render(<AnalysisWorkspace onBack={() => undefined} />);
 
     const notes = screen.getByLabelText(/match notes/i);
     await user.clear(notes);

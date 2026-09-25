@@ -90,7 +90,7 @@ function saveLayout(layout: WorkspaceLayout) {
   if (typeof window !== "undefined") window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
 }
 
-export function AnalysisWorkspace() {
+export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
   const [events, setEvents] = useState(INITIAL_ANALYSIS_EVENTS);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
   const [sortKey, setSortKey] = useState<SortKey>("timestamp");
@@ -188,6 +188,7 @@ export function AnalysisWorkspace() {
         <WorkspaceHeader
           eventCount={events.length}
           layout={layout}
+          onBack={onBack}
           onAddEvent={() => setIsManualEventOpen(true)}
           onToggleNotes={() => togglePanel("notes")}
           onToggleFilters={() => togglePanel("filters")}
@@ -284,9 +285,10 @@ export function AnalysisWorkspace() {
   );
 }
 
-function WorkspaceHeader({ eventCount, layout, onAddEvent, onToggleNotes, onToggleFilters, onSwap, onReset }: {
+function WorkspaceHeader({ eventCount, layout, onBack, onAddEvent, onToggleNotes, onToggleFilters, onSwap, onReset }: {
   eventCount: number;
   layout: WorkspaceLayout;
+  onBack?: () => void;
   onAddEvent: () => void;
   onToggleNotes: () => void;
   onToggleFilters: () => void;
@@ -296,9 +298,13 @@ function WorkspaceHeader({ eventCount, layout, onAddEvent, onToggleNotes, onTogg
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-4">
       <div className="flex min-w-0 items-center gap-4">
-        <Button asChild variant="ghost" size="icon" aria-label="Back to import">
-          <Link to="/"><ArrowLeft /></Link>
-        </Button>
+        {onBack ? (
+          <Button variant="ghost" size="icon" aria-label="Back to import" onClick={onBack}><ArrowLeft /></Button>
+        ) : (
+          <Button asChild variant="ghost" size="icon" aria-label="Back to import">
+            <Link to="/"><ArrowLeft /></Link>
+          </Button>
+        )}
         <div className="h-6 w-px bg-border" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">

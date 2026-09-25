@@ -73,9 +73,9 @@ describe("AnalysisWorkspace", () => {
     await user.click(screen.getByRole("menuitemradio", { name: /1.5×/i }));
     expect(screen.getByRole("button", { name: /playback speed/i })).toHaveTextContent("1.5×");
     await user.click(screen.getByRole("button", { name: /hide video controls/i }));
-    expect(screen.queryByRole("slider", { name: /video timeline/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /play replay/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /show video controls/i }));
-    expect(screen.getByRole("slider", { name: /video timeline/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /play replay/i })).toBeInTheDocument();
   });
 
   it("marks selected tags with the blue accent while editing", async () => {

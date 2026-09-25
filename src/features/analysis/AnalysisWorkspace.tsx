@@ -71,7 +71,7 @@ interface WorkspaceLayout {
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
-  vertical: { video: 27.5, review: 72.5 },
+  vertical: { video: 24, review: 76 },
   review: { table: 60, utilities: 40 },
   lower: { notes: 45, filters: 55 },
   notesVisible: true,
@@ -210,7 +210,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
           onReset={() => setAndSaveLayout(DEFAULT_LAYOUT)}
         />
 
-        <div className="h-[calc(min(50vh,640px)/0.275)] shrink-0">
+        <div className="h-[calc(min(50vh,640px)/0.24)] shrink-0">
         <ResizablePanelGroup
           key={`vertical-${JSON.stringify(layout.vertical)}`}
           orientation="vertical"

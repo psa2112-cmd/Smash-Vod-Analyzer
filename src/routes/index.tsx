@@ -1,24 +1,53 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
+import { ReplayImportPanel, type ReplaySource } from "@/features/replay-import/ReplayImportPanel";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
-  component: Index,
+  head: () => ({
+    meta: [
+      { title: "Replay Analyzer — Smash Ultimate VOD Review" },
+      { name: "description", content: "Import a Smash Ultimate replay, YouTube video or Twitch VOD and jump straight to every hit." },
+      { property: "og:title", content: "Replay Analyzer — Smash Ultimate VOD Review" },
+      { property: "og:description", content: "Turn long Smash Ultimate VODs into timestamped, taggable review moments." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
+    ],
+  }),
+  component: HomePage,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
+function HomePage() {
+  const [lastSource, setLastSource] = useState<ReplaySource | null>(null);
+
+  const handleAnalyze = async (source: ReplaySource) => {
+    console.info("[home] analyze requested", { kind: source.kind });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Processing page is the next module; hand-off wired once approved.
+    setLastSource(source);
+  };
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
+    <main className="relative min-h-screen overflow-hidden bg-background">
+      <div className="pointer-events-none absolute inset-0 bg-stage" aria-hidden />
+      <div className="relative mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6 py-16">
+        <header className="mb-10">
+          <p className="mb-3 font-mono text-xs uppercase tracking-[0.35em] text-primary">Smash Ultimate · VOD Review</p>
+          <h1 className="font-display text-5xl font-bold uppercase leading-none tracking-tight">
+            Replay <span className="text-primary">Analyzer</span>
+          </h1>
+          <p className="mt-4 text-muted-foreground">
+            Drop in a match. We find every hit and give you timestamps to jump, tag and learn from.
+          </p>
+        </header>
+        <section aria-label="Import replay" className="rounded-xl border border-border bg-card/80 p-6 shadow-panel backdrop-blur">
+          <ReplayImportPanel onAnalyze={handleAnalyze} />
+        </section>
+        {lastSource && (
+          <p role="status" className="mt-4 text-center text-sm text-muted-foreground">
+            Ready to analyze. The progress screen comes in the next step.
+          </p>
+        )}
+      </div>
+    </main>
   );
 }

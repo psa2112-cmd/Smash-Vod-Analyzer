@@ -71,7 +71,7 @@ interface WorkspaceLayout {
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
-  vertical: { video: 34, review: 66 },
+  vertical: { video: 35, review: 65 },
   review: { table: 60, utilities: 40 },
   lower: { notes: 45, filters: 55 },
   notesVisible: true,
@@ -210,7 +210,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
           onReset={() => setAndSaveLayout(DEFAULT_LAYOUT)}
         />
 
-        <div className="h-[max(1250px,145vh)] shrink-0">
+        <div className="h-[calc(min(50vh,640px)/0.35)] shrink-0">
         <ResizablePanelGroup
           key={`vertical-${JSON.stringify(layout.vertical)}`}
           orientation="vertical"
@@ -400,7 +400,7 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
   };
   return (
     <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
-      <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block h-full max-h-full w-full max-w-full object-contain" />
+      <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />
       <div className="pointer-events-none absolute inset-0 bg-video-shade" />
       <div className="absolute left-4 top-4 flex items-center gap-2">
         <Badge className="bg-background/85 text-foreground shadow-none">GAME 3</Badge>

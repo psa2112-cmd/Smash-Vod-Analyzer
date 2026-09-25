@@ -100,7 +100,7 @@
 
 @theme inline {
   --color-success: var(--success);
-  --font-display: "Chakra Petch", ui-sans-serif, sans-serif;
+  --font-display: "IBM Plex Sans", ui-sans-serif, sans-serif;
   --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --shadow-glow: 0 0 24px -4px oklch(0.737 0.122 207.2 55%);

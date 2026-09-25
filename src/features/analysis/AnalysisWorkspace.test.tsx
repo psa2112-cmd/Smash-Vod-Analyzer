@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AnalysisWorkspace } from "./AnalysisWorkspace";
 
 describe("AnalysisWorkspace", () => {
+  beforeEach(() => window.localStorage.clear());
+
   it("sorts the event table and seeks from a timestamp", async () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);
@@ -25,7 +27,7 @@ describe("AnalysisWorkspace", () => {
     expect(screen.getAllByText("Missed Tech Chase").length).toBeGreaterThan(0);
     expect(screen.queryByText("Hit Received", { selector: "span" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /reset filters/i }));
-    expect(screen.getByText("Hit Received", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getAllByText("Hit Received", { selector: "span" }).length).toBeGreaterThan(0);
   });
 
   it("adds a manual event at the current playhead", async () => {
@@ -33,9 +35,10 @@ describe("AnalysisWorkspace", () => {
     render(<AnalysisWorkspace onBack={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: /add event/i }));
-    await user.selectOptions(screen.getByLabelText("Event type", { exact: true }), "Neutral Win");
-    await user.type(screen.getByLabelText("Event note", { exact: true }), "Held center stage.");
-    await user.click(screen.getByRole("button", { name: /save event/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Event type", { exact: true }), "Neutral Win");
+    await user.type(within(dialog).getByLabelText("Event note", { exact: true }), "Held center stage.");
+    await user.click(within(dialog).getByRole("button", { name: /save event/i }));
     expect(screen.getByText("Held center stage.")).toBeInTheDocument();
   });
 

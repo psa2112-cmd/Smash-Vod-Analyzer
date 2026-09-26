@@ -66,6 +66,7 @@ export interface EventFilters {
   eventType: string;
   character: string;
   tag: string;
+  selectedTags?: string[];
   minDamage: number;
   maxDamage: number;
   minElapsed: number;
@@ -77,6 +78,7 @@ export const DEFAULT_FILTERS: EventFilters = {
   eventType: "all",
   character: "all",
   tag: "all",
+  selectedTags: [],
   minDamage: 0,
   maxDamage: 999,
   minElapsed: 0,
@@ -187,6 +189,7 @@ export function normalizeTablePreferences(value: unknown): TablePreferences {
 
 export function applyEventFilters(events: AnalysisEvent[], filters: EventFilters): AnalysisEvent[] {
   const query = filters.query.trim().toLowerCase();
+  const selectedTags = filters.selectedTags ?? [];
   return events.filter((event) => {
     const quickMatch =
       filters.quickFilter === "all" ||
@@ -196,7 +199,8 @@ export function applyEventFilters(events: AnalysisEvent[], filters: EventFilters
       (filters.quickFilter === "untagged" && event.tags.length === 0) ||
       (filters.quickFilter === "high-damage" && (event.damage ?? 0) >= 15);
     const queryMatch = !query || [event.eventType, event.character ?? "", event.note, ...event.tags].join(" ").toLowerCase().includes(query);
-    return quickMatch && queryMatch &&
+    const tagsColumnMatch = selectedTags.length === 0 || selectedTags.some((tag) => event.tags.includes(tag));
+    return quickMatch && queryMatch && tagsColumnMatch &&
       (filters.eventType === "all" || event.eventType === filters.eventType) &&
       (filters.character === "all" || event.character === filters.character) &&
       (filters.tag === "all" || event.tags.includes(filters.tag)) &&

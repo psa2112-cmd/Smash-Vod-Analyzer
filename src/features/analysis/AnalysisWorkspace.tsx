@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -584,13 +585,14 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
                   column={column}
                   sorts={tablePreferences.sorts}
                   onSort={onSort}
-                  onHide={() => toggleColumn(column.id)}
                   onResize={(startX) => resizeColumn(column, startX)}
                   onDragStart={() => setDraggedColumnId(column.id)}
                   onDrop={() => {
                     if (draggedColumnId) onTablePreferencesChange({ ...tablePreferences, order: reorderTableColumns(tablePreferences.order, draggedColumnId, column.id) });
                     setDraggedColumnId(null);
                   }}
+                  tagsFilter={filters.selectedTags ?? []}
+                  onTagsFilterChange={(tags) => onFiltersChange({ ...filters, selectedTags: tags })}
                 />
               ))}
               <th className="w-12"><span className="sr-only">Actions</span></th>
@@ -612,14 +614,15 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
   );
 }
 
-function TableHeader({ column, sorts, onSort, onHide, onResize, onDragStart, onDrop }: {
+function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, tagsFilter, onTagsFilterChange }: {
   column: TableColumnDefinition;
   sorts: SortRule[];
   onSort: (key: SortKey, additive: boolean) => void;
-  onHide: () => void;
   onResize: (startX: number) => void;
   onDragStart: () => void;
   onDrop: () => void;
+  tagsFilter: string[];
+  onTagsFilterChange: (tags: string[]) => void;
 }) {
   const sortIndex = column.sortKey ? sorts.findIndex((sort) => sort.key === column.sortKey) : -1;
   const activeSort = sortIndex >= 0 ? sorts[sortIndex] : undefined;
@@ -634,12 +637,48 @@ function TableHeader({ column, sorts, onSort, onHide, onResize, onDragStart, onD
     >
       <div className="flex min-w-0 items-center">
         <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground/60" aria-hidden />
-        {column.sortKey ? (
+        {column.id === "tags" ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Filter by tags"
+                className={cn("h-7 min-w-0 flex-1 justify-start px-1 text-xs text-muted-foreground", tagsFilter.length > 0 && "text-primary")}
+              >
+                <span className="truncate">{column.label}</span>
+                {tagsFilter.length > 0 && <span className="font-mono text-[9px]">{tagsFilter.length}</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-56 border-border bg-card p-3">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Show events tagged with</p>
+              <div className="flex flex-wrap gap-1.5">
+                {STARTER_TAGS.map((tag) => (
+                  <Button
+                    key={tag}
+                    type="button"
+                    variant={tagsFilter.includes(tag) ? "default" : "outline"}
+                    aria-pressed={tagsFilter.includes(tag)}
+                    size="sm"
+                    className="h-6 px-1.5 text-[10px]"
+                    onClick={() => onTagsFilterChange(tagsFilter.includes(tag) ? tagsFilter.filter((t) => t !== tag) : [...tagsFilter, tag])}
+                  >
+                    {tag}
+                  </Button>
+                ))}
+              </div>
+              {tagsFilter.length > 0 && (
+                <Button variant="ghost" size="sm" className="mt-2 h-6 px-1.5 text-[10px]" onClick={() => onTagsFilterChange([])}>
+                  <X /> Clear
+                </Button>
+              )}
+            </PopoverContent>
+          </Popover>
+        ) : column.sortKey ? (
           <Button variant="ghost" size="sm" className={cn("h-7 min-w-0 flex-1 justify-start px-1 text-xs text-muted-foreground", activeSort && "text-primary")} onClick={(event) => onSort(column.sortKey as SortKey, event.shiftKey)} aria-label={`Sort by ${column.label}`}>
             <span className="truncate">{column.label}</span>{activeSort ? activeSort.direction === "asc" ? <ArrowUp /> : <ArrowDown /> : null}{activeSort && <span className="font-mono text-[9px]">{sortIndex + 1}</span>}
           </Button>
         ) : <span className="min-w-0 flex-1 truncate px-1.5">{column.label}</span>}
-        <Button variant="ghost" size="icon" className="size-6 shrink-0 opacity-55 hover:opacity-100" onClick={onHide} aria-label={`Hide ${column.label} column`}><EyeOff /></Button>
       </div>
       <div role="separator" aria-label={`Resize ${column.label} column`} aria-orientation="vertical" className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize touch-none hover:bg-primary/50" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onResize(event.clientX); }} />
     </th>

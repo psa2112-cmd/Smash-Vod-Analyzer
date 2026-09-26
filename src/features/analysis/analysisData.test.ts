@@ -48,10 +48,13 @@ describe("analysis data utilities", () => {
   });
 
   it("uses later sort rules to break ties", () => {
+    const firstEvent = events[0];
+    const secondEvent = events[1];
+    if (!firstEvent || !secondEvent) throw new Error("Expected analysis fixtures");
     const tiedEvents = [
-      { ...events[0], id: "later", eventType: "Hit Dealt" as const, timestamp: 80 },
-      { ...events[0], id: "earlier", eventType: "Hit Dealt" as const, timestamp: 20 },
-      { ...events[1], id: "other", eventType: "Neutral Win" as const, timestamp: 10 },
+      { ...firstEvent, id: "later", eventType: "Hit Dealt" as const, timestamp: 80 },
+      { ...firstEvent, id: "earlier", eventType: "Hit Dealt" as const, timestamp: 20 },
+      { ...secondEvent, id: "other", eventType: "Neutral Win" as const, timestamp: 10 },
     ];
     expect(sortAnalysisEvents(tiedEvents, [
       { key: "eventType", direction: "asc" },

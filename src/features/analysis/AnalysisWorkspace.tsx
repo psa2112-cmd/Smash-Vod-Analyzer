@@ -150,8 +150,8 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
     if (event.ctrlKey) {
       const ctrlActions: Record<string, () => void> = {
         m: () => setControlsVisible((visible) => !visible),
-        ,: () => togglePanel("notes"),
-        .: () => togglePanel("filters"),
+        ",": () => togglePanel("notes"),
+        ".": () => togglePanel("filters"),
       };
       const action = ctrlActions[key];
       if (!action) return;

@@ -122,6 +122,31 @@
   background: linear-gradient(90deg, var(--background), var(--card) 18%, var(--card) 82%, var(--background));
 }
 
+@utility analysis-table-scrollbar {
+  scrollbar-color: var(--muted-foreground) var(--card);
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--muted-foreground);
+    border: 3px solid var(--card);
+    border-radius: 999px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+  }
+}
+
 .dark {
   --background: oklch(0.129 0.042 264.695);
   --foreground: oklch(0.984 0.003 247.858);

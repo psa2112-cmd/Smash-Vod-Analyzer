@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   Filter,
+  GripVertical,
   ListFilter,
   Maximize2,
   Minimize2,
@@ -25,7 +26,7 @@ import { Link } from "@tanstack/react-router";
 import gameplayImage from "@/assets/analysis-gameplay.jpg";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -42,10 +43,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_FILTERS,
+  DEFAULT_TABLE_PREFERENCES,
   INITIAL_ANALYSIS_EVENTS,
   MANUAL_EVENT_TYPES,
   STARTER_TAGS,
+  TABLE_COLUMNS,
   applyEventFilters,
+  cycleSortRules,
+  normalizeTablePreferences,
+  reorderTableColumns,
   formatTimestamp,
   seekTimeForEvent,
   sortAnalysisEvents,
@@ -53,13 +59,17 @@ import {
   type AnalysisEventType,
   type EventFilters,
   type QuickFilter,
-  type SortDirection,
+  type SortRule,
   type SortKey,
+  type TableColumnDefinition,
+  type TableColumnId,
+  type TablePreferences,
 } from "./analysisData";
 
 const VIDEO_DURATION = 224;
 const NOTES_KEY = "smash-replay-match-notes";
 const LAYOUT_KEY = "smash-replay-workspace-layout";
+const TABLE_PREFERENCES_KEY = "smash-replay-table-preferences";
 
 interface WorkspaceLayout {
   vertical: Record<string, number>;
@@ -101,14 +111,27 @@ function saveLayout(layout: WorkspaceLayout) {
   if (typeof window !== "undefined") window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
 }
 
+function readStoredTablePreferences(): TablePreferences {
+  if (typeof window === "undefined") return DEFAULT_TABLE_PREFERENCES;
+  try {
+    const stored = window.localStorage.getItem(TABLE_PREFERENCES_KEY);
+    return stored ? normalizeTablePreferences(JSON.parse(stored)) : DEFAULT_TABLE_PREFERENCES;
+  } catch {
+    return DEFAULT_TABLE_PREFERENCES;
+  }
+}
+
+function saveTablePreferences(preferences: TablePreferences) {
+  if (typeof window !== "undefined") window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(preferences));
+}
+
 const FRAME_SECONDS = 1 / 60;
 const VERTICAL_HANDLE_CLASS = "group h-2 w-full cursor-row-resize bg-border/40 transition-colors hover:bg-primary/50 data-[separator=active]:bg-primary/70 focus-visible:bg-primary/60 after:hidden";
 
 export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
   const [events, setEvents] = useState(INITIAL_ANALYSIS_EVENTS);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
-  const [sortKey, setSortKey] = useState<SortKey>("timestamp");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [tablePreferences, setTablePreferences] = useState(DEFAULT_TABLE_PREFERENCES);
   const [selectedEventId, setSelectedEventId] = useState<string | null>("evt-1");
   const [currentTime, setCurrentTime] = useState(17);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -124,6 +147,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
 
   useEffect(() => {
     setLayout(readStoredLayout());
+    setTablePreferences(readStoredTablePreferences());
     setNotes(window.localStorage.getItem(NOTES_KEY) ?? "");
   }, []);
 
@@ -177,8 +201,8 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
   }, []);
 
   const visibleEvents = useMemo(
-    () => sortAnalysisEvents(applyEventFilters(events, filters), sortKey, sortDirection),
-    [events, filters, sortDirection, sortKey],
+    () => sortAnalysisEvents(applyEventFilters(events, filters), tablePreferences.sorts),
+    [events, filters, tablePreferences.sorts],
   );
 
   const setAndSaveLayout = (nextLayout: WorkspaceLayout) => {
@@ -196,12 +220,13 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
     setEvents((current) => current.map((event) => (event.id === id ? { ...event, ...updates } : event)));
   };
 
-  const changeSort = (key: SortKey) => {
-    if (sortKey === key) setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDirection("asc");
-    }
+  const setAndSaveTablePreferences = (nextPreferences: TablePreferences) => {
+    setTablePreferences(nextPreferences);
+    saveTablePreferences(nextPreferences);
+  };
+
+  const changeSort = (key: SortKey, additive: boolean) => {
+    setAndSaveTablePreferences({ ...tablePreferences, sorts: cycleSortRules(tablePreferences.sorts, key, additive) });
   };
 
   const addManualEvent = () => {
@@ -245,7 +270,10 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
           controlsVisible={controlsVisible}
           onToggleControls={() => setControlsVisible((visible) => !visible)}
           onSwap={() => setAndSaveLayout({ ...layout, isSwapped: !layout.isSwapped })}
-          onReset={() => setAndSaveLayout(DEFAULT_LAYOUT)}
+           onReset={() => {
+             setAndSaveLayout(DEFAULT_LAYOUT);
+             setAndSaveTablePreferences(DEFAULT_TABLE_PREFERENCES);
+           }}
         />
 
         <div className="h-[calc(min(50vh,640px)/0.24)] shrink-0">
@@ -283,8 +311,8 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
                 totalCount={events.length}
                 selectedEventId={selectedEventId}
                 filters={filters}
-                sortKey={sortKey}
-                sortDirection={sortDirection}
+                 tablePreferences={tablePreferences}
+                 onTablePreferencesChange={setAndSaveTablePreferences}
                 onFiltersChange={setFilters}
                 onSort={changeSort}
                 onJump={jumpToEvent}
@@ -471,52 +499,106 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
   );
 }
 
-function EventTablePanel({ events, totalCount, selectedEventId, filters, sortKey, sortDirection, onFiltersChange, onSort, onJump, onUpdate, onDelete, onAddEvent }: {
+function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePreferences, onTablePreferencesChange, onFiltersChange, onSort, onJump, onUpdate, onDelete, onAddEvent }: {
   events: AnalysisEvent[];
   totalCount: number;
   selectedEventId: string | null;
   filters: EventFilters;
-  sortKey: SortKey;
-  sortDirection: SortDirection;
+  tablePreferences: TablePreferences;
+  onTablePreferencesChange: (preferences: TablePreferences) => void;
   onFiltersChange: (filters: EventFilters) => void;
-  onSort: (key: SortKey) => void;
+  onSort: (key: SortKey, additive: boolean) => void;
   onJump: (event: AnalysisEvent) => void;
   onUpdate: (id: string, updates: Partial<AnalysisEvent>) => void;
   onDelete: (id: string) => void;
   onAddEvent: () => void;
 }) {
+  const [draggedColumnId, setDraggedColumnId] = useState<TableColumnId | null>(null);
+  const orderedColumns = tablePreferences.order
+    .map((id) => TABLE_COLUMNS.find((column) => column.id === id))
+    .filter((column): column is TableColumnDefinition => Boolean(column));
+  const visibleColumns = orderedColumns.filter((column) => !tablePreferences.hidden.includes(column.id));
+  const tableWidth = visibleColumns.reduce((total, column) => total + tablePreferences.widths[column.id], 0) + 48;
+
+  const toggleColumn = (columnId: TableColumnId) => {
+    const hidden = tablePreferences.hidden.includes(columnId)
+      ? tablePreferences.hidden.filter((id) => id !== columnId)
+      : [...tablePreferences.hidden, columnId];
+    onTablePreferencesChange({ ...tablePreferences, hidden });
+  };
+
+  const resizeColumn = (column: TableColumnDefinition, startX: number) => {
+    const startWidth = tablePreferences.widths[column.id];
+    const onPointerMove = (event: PointerEvent) => {
+      const width = Math.min(800, Math.max(column.minWidth, startWidth + event.clientX - startX));
+      onTablePreferencesChange({ ...tablePreferences, widths: { ...tablePreferences.widths, [column.id]: width } });
+    };
+    const stopResize = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResize);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+  };
+
   return (
     <section aria-label="Analysis event table" className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
+        <Button variant="outline" size="sm" onClick={onAddEvent}><Plus /> Add</Button>
         <div className="flex items-center gap-2">
           <Sparkles className="size-4 text-primary" aria-hidden />
           <h2 className="font-display text-sm font-semibold">Detected events</h2>
           <span className="font-mono text-xs text-muted-foreground">{events.length}/{totalCount}</span>
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Choose visible columns"><Columns2 /> Columns</Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-48">
+            <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {orderedColumns.map((column) => (
+              <DropdownMenuCheckboxItem
+                key={column.id}
+                checked={!tablePreferences.hidden.includes(column.id)}
+                onSelect={(event) => event.preventDefault()}
+                onCheckedChange={() => toggleColumn(column.id)}
+              >{column.label}</DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <div className="relative ml-auto w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input aria-label="Search events and notes" value={filters.query} onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })} placeholder="Search notes, tags, events…" className="h-8 pl-8 text-xs" />
         </div>
-        <Button variant="outline" size="sm" onClick={onAddEvent}><Plus /> Add</Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[1150px] table-fixed text-xs">
+      <div className="analysis-table-scrollbar min-h-0 flex-1 overflow-auto">
+        <table className="table-fixed text-xs" style={{ width: tableWidth }}>
+          <colgroup>
+            {visibleColumns.map((column) => <col key={column.id} style={{ width: tablePreferences.widths[column.id] }} />)}
+            <col className="w-12" />
+          </colgroup>
           <thead className="sticky top-0 z-10 bg-card text-muted-foreground">
             <tr className="border-b border-border">
-              <SortableHeader label="Event type" sortKey="eventType" currentKey={sortKey} direction={sortDirection} onSort={onSort} className="w-40" />
-              <SortableHeader label="Character" sortKey="character" currentKey={sortKey} direction={sortDirection} onSort={onSort} className="w-24" />
-              <SortableHeader label="Timestamp" sortKey="timestamp" currentKey={sortKey} direction={sortDirection} onSort={onSort} className="w-28" />
-              <SortableHeader label="Damage" sortKey="damage" currentKey={sortKey} direction={sortDirection} onSort={onSort} className="w-20" />
-              <th className="w-20 px-3 py-2 text-left font-medium">Direction</th>
-              <th className="w-52 px-3 py-2 text-left font-medium">Tags</th>
-              <th className="px-3 py-2 text-left font-medium">Note</th>
-              <SortableHeader label="Since prev." sortKey="secondsSincePrevious" currentKey={sortKey} direction={sortDirection} onSort={onSort} className="w-24" />
+              {visibleColumns.map((column) => (
+                <TableHeader
+                  key={column.id}
+                  column={column}
+                  sorts={tablePreferences.sorts}
+                  onSort={onSort}
+                  onHide={() => toggleColumn(column.id)}
+                  onResize={(startX) => resizeColumn(column, startX)}
+                  onDragStart={() => setDraggedColumnId(column.id)}
+                  onDrop={() => {
+                    if (draggedColumnId) onTablePreferencesChange({ ...tablePreferences, order: reorderTableColumns(tablePreferences.order, draggedColumnId, column.id) });
+                    setDraggedColumnId(null);
+                  }}
+                />
+              ))}
               <th className="w-12"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             {events.map((event) => (
-              <EventRow key={event.id} event={event} selected={selectedEventId === event.id} onJump={() => onJump(event)} onUpdate={(updates) => onUpdate(event.id, updates)} onDelete={() => onDelete(event.id)} />
+               <EventRow key={event.id} event={event} columns={visibleColumns} selected={selectedEventId === event.id} onJump={() => onJump(event)} onUpdate={(updates) => onUpdate(event.id, updates)} onDelete={() => onDelete(event.id)} />
             ))}
           </tbody>
         </table>
@@ -530,28 +612,56 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, sortKey
   );
 }
 
-function SortableHeader({ label, sortKey, currentKey, direction, onSort, className }: { label: string; sortKey: SortKey; currentKey: SortKey; direction: SortDirection; onSort: (key: SortKey) => void; className?: string }) {
-  const active = currentKey === sortKey;
+function TableHeader({ column, sorts, onSort, onHide, onResize, onDragStart, onDrop }: {
+  column: TableColumnDefinition;
+  sorts: SortRule[];
+  onSort: (key: SortKey, additive: boolean) => void;
+  onHide: () => void;
+  onResize: (startX: number) => void;
+  onDragStart: () => void;
+  onDrop: () => void;
+}) {
+  const sortIndex = column.sortKey ? sorts.findIndex((sort) => sort.key === column.sortKey) : -1;
+  const activeSort = sortIndex >= 0 ? sorts[sortIndex] : undefined;
   return (
-    <th className={cn("px-2 py-1 text-left font-medium", className)}>
-      <Button variant="ghost" size="sm" className={cn("h-7 px-1.5 text-xs text-muted-foreground", active && "text-primary")} onClick={() => onSort(sortKey)} aria-label={`Sort by ${label}`}>
-        {label}{active ? direction === "asc" ? <ArrowUp /> : <ArrowDown /> : null}
-      </Button>
+    <th
+      draggable
+      onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; onDragStart(); }}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => { event.preventDefault(); onDrop(); }}
+      className="group/header relative px-1 py-1 text-left font-medium"
+      aria-label={column.label}
+    >
+      <div className="flex min-w-0 items-center">
+        <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground/60" aria-hidden />
+        {column.sortKey ? (
+          <Button variant="ghost" size="sm" className={cn("h-7 min-w-0 flex-1 justify-start px-1 text-xs text-muted-foreground", activeSort && "text-primary")} onClick={(event) => onSort(column.sortKey as SortKey, event.shiftKey)} aria-label={`Sort by ${column.label}`}>
+            <span className="truncate">{column.label}</span>{activeSort ? activeSort.direction === "asc" ? <ArrowUp /> : <ArrowDown /> : null}{activeSort && <span className="font-mono text-[9px]">{sortIndex + 1}</span>}
+          </Button>
+        ) : <span className="min-w-0 flex-1 truncate px-1.5">{column.label}</span>}
+        <Button variant="ghost" size="icon" className="size-6 shrink-0 opacity-55 hover:opacity-100" onClick={onHide} aria-label={`Hide ${column.label} column`}><EyeOff /></Button>
+      </div>
+      <div role="separator" aria-label={`Resize ${column.label} column`} aria-orientation="vertical" className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize touch-none hover:bg-primary/50" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onResize(event.clientX); }} />
     </th>
   );
 }
 
-function EventRow({ event, selected, onJump, onUpdate, onDelete }: { event: AnalysisEvent; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>) => void; onDelete: () => void }) {
+function EventRow({ event, columns, selected, onJump, onUpdate, onDelete }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>) => void; onDelete: () => void }) {
+  const cellForColumn = (columnId: TableColumnId) => {
+    switch (columnId) {
+      case "eventType": return <span className={cn("font-medium", event.eventType === "Hit Received" && "text-destructive", event.eventType === "Hit Dealt" && "text-success")}>{event.eventType}</span>;
+      case "character": return <span className="text-muted-foreground">{event.character ?? "—"}</span>;
+      case "timestamp": return <Button variant="ghost" size="sm" className="h-7 px-2 font-mono text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play />{formatTimestamp(event.timestamp)}</Button>;
+      case "damage": return <span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>;
+      case "direction": return <span className="text-muted-foreground">{event.direction ?? "—"}</span>;
+      case "tags": return <InlineTags tags={event.tags} onChange={(tags) => onUpdate({ tags })} />;
+      case "note": return <input aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value })} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
+      case "secondsSincePrevious": return <span className="font-mono text-muted-foreground">{event.secondsSincePrevious === null ? "—" : `${event.secondsSincePrevious.toFixed(1)}s`}</span>;
+    }
+  };
   return (
     <tr className={cn("border-b border-border/70 transition-colors hover:bg-secondary/35", selected && "bg-primary/8 shadow-[inset_2px_0_var(--color-primary)]")}>
-      <td className="px-3 py-2"><span className={cn("font-medium", event.eventType === "Hit Received" && "text-destructive", event.eventType === "Hit Dealt" && "text-success")}>{event.eventType}</span></td>
-      <td className="px-3 py-2 text-muted-foreground">{event.character ?? "—"}</td>
-      <td className="px-3 py-2"><Button variant="ghost" size="sm" className="h-7 px-2 font-mono text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play />{formatTimestamp(event.timestamp)}</Button></td>
-      <td className="px-3 py-2 font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</td>
-      <td className="px-3 py-2 text-muted-foreground">{event.direction ?? "—"}</td>
-      <td className="px-3 py-2"><InlineTags tags={event.tags} onChange={(tags) => onUpdate({ tags })} /></td>
-      <td className="px-3 py-2"><input aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value })} className="h-7 w-full min-w-40 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" /></td>
-      <td className="px-3 py-2 font-mono text-muted-foreground">{event.secondsSincePrevious === null ? "—" : `${event.secondsSincePrevious.toFixed(1)}s`}</td>
+      {columns.map((column) => <td key={column.id} className="overflow-hidden px-3 py-2 align-middle">{cellForColumn(column.id)}</td>)}
       <td className="pr-2"><Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive" onClick={onDelete} aria-label={`Delete event at ${formatTimestamp(event.timestamp)}`}><Trash2 /></Button></td>
     </tr>
   );
@@ -559,8 +669,17 @@ function EventRow({ event, selected, onJump, onUpdate, onDelete }: { event: Anal
 
 function InlineTags({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
   const [editing, setEditing] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!editing) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!editorRef.current?.contains(event.target as Node)) setEditing(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [editing]);
   return editing ? (
-    <div className="flex flex-wrap gap-1 rounded border border-primary/40 bg-card p-1.5">
+    <div ref={editorRef} className="flex flex-wrap gap-1 rounded border border-primary/40 bg-card p-1.5">
       {STARTER_TAGS.map((tag) => (
          <Button key={tag} variant={tags.includes(tag) ? "default" : "ghost"} aria-pressed={tags.includes(tag)} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => onChange(tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])}>{tag}</Button>
       ))}

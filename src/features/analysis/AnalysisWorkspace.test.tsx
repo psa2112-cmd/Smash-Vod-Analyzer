@@ -19,6 +19,39 @@ describe("AnalysisWorkspace", () => {
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:17");
   });
 
+  it("supports multi-column sorting and column visibility", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: /sort by event type/i }));
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByRole("button", { name: /sort by timestamp/i }));
+    await user.keyboard("{/Shift}");
+    expect(screen.getByRole("button", { name: /sort by event type/i })).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /sort by timestamp/i })).toHaveTextContent("2");
+
+    await user.click(screen.getByRole("button", { name: /choose visible columns/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Damage" }));
+    expect(screen.queryByRole("columnheader", { name: /damage/i })).not.toBeInTheDocument();
+  });
+
+  it("hides a column from its header eye and resets table preferences", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: /hide character column/i }));
+    expect(screen.queryByRole("columnheader", { name: /character/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /reset layout/i }));
+    expect(screen.getByRole("columnheader", { name: /character/i })).toBeInTheDocument();
+  });
+
+  it("closes the tag editor when clicking outside", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getAllByRole("button", { name: "Edit tags" })[0]!);
+    expect(screen.getByRole("button", { name: "Close tag editor" })).toBeInTheDocument();
+    await user.click(screen.getByRole("heading", { name: "Detected events" }));
+    expect(screen.queryByRole("button", { name: "Close tag editor" })).not.toBeInTheDocument();
+  });
+
   it("filters events and resets the result", async () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);

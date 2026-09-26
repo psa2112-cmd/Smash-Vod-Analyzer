@@ -199,7 +199,7 @@ export function applyEventFilters(events: AnalysisEvent[], filters: EventFilters
       (filters.quickFilter === "untagged" && event.tags.length === 0) ||
       (filters.quickFilter === "high-damage" && (event.damage ?? 0) >= 15);
     const queryMatch = !query || [event.eventType, event.character ?? "", event.note, ...event.tags].join(" ").toLowerCase().includes(query);
-    const tagsColumnMatch = selectedTags.length === 0 || selectedTags.some((tag) => event.tags.includes(tag));
+    const tagsColumnMatch = selectedTags.length === 0 || selectedTags.every((tag) => event.tags.includes(tag));
     return quickMatch && queryMatch && tagsColumnMatch &&
       (filters.eventType === "all" || event.eventType === filters.eventType) &&
       (filters.character === "all" || event.character === filters.character) &&

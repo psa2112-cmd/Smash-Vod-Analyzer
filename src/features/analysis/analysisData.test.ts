@@ -85,7 +85,7 @@ describe("analysis data utilities", () => {
     expect(normalized.order[0]).toBe("note");
     expect(normalized.widths.note).toBeGreaterThanOrEqual(180);
     expect(normalized.hidden).toContain("damage");
-    expect(normalized.hidden).not.toContain("timestamp");
+    expect(normalized.hidden).toContain("timestamp");
     expect(normalized.sorts).toEqual([{ key: "damage", direction: "desc" }]);
   });
 

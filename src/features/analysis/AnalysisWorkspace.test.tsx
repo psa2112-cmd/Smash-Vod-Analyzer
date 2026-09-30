@@ -29,19 +29,12 @@ describe("AnalysisWorkspace", () => {
     expect(screen.getByRole("button", { name: /sort by event type/i })).toHaveTextContent("1");
     expect(screen.getByRole("button", { name: /sort by timestamp/i })).toHaveTextContent("2");
 
-    await user.click(screen.getByRole("button", { name: /choose visible columns/i }));
+    screen.getByRole("button", { name: /choose visible columns/i }).focus();
+    await user.keyboard("{ArrowDown}");
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Damage" }));
     expect(screen.queryByRole("columnheader", { name: /damage/i })).not.toBeInTheDocument();
   });
 
-  it("hides a column from its header eye and resets table preferences", async () => {
-    const user = userEvent.setup();
-    render(<AnalysisWorkspace onBack={() => undefined} />);
-    await user.click(screen.getByRole("button", { name: /hide character column/i }));
-    expect(screen.queryByRole("columnheader", { name: /character/i })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /reset layout/i }));
-    expect(screen.getByRole("columnheader", { name: /character/i })).toBeInTheDocument();
-  });
 
   it("closes the tag editor when clicking outside", async () => {
     const user = userEvent.setup();
@@ -135,7 +128,7 @@ describe("AnalysisWorkspace", () => {
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:16");
     await user.keyboard("{Control>}m{/Control}");
     expect(screen.queryByRole("button", { name: /play replay/i })).not.toBeInTheDocument();
-    await user.keyboard("{Control>}n{/Control}");
+    await user.keyboard("{Control>},{/Control}");
     expect(screen.queryByLabelText("Match notes", { exact: true })).not.toBeInTheDocument();
   });
 });

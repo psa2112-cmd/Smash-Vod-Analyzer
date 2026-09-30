@@ -796,7 +796,7 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-card sm:max-w-xl">
+      <DialogContent className="border-border bg-card max-w-xl">
         <DialogHeader><DialogTitle>Add manual event</DialogTitle><DialogDescription>Capture a meaningful moment at the current playhead.</DialogDescription></DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-[120px_1fr] gap-3">

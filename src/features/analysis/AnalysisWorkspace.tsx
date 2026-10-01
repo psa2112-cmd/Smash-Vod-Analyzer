@@ -28,6 +28,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { formatTimestampInput, handleArrowDown, handleArrowLeft, handleArrowRight, handleArrowUp, parseCharacterInput, parseDamageInput, parseTimestampInput } from "./inlineEditing";
 import gameplayImage from "@/assets/analysis-gameplay.jpg";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ import {
   DEFAULT_TABLE_PREFERENCES,
   INITIAL_ANALYSIS_EVENTS,
   MANUAL_EVENT_TYPES,
+  ALL_EVENT_TYPES,
   STARTER_TAGS,
   TABLE_COLUMNS,
   applyEventFilters,
@@ -450,6 +452,11 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
       event.preventDefault();
       if (event.shiftKey) performRedo();
       else performUndo();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "e" && !isManualEventOpen) {
+      event.preventDefault();
+      setIsManualEventOpen(true);
       return;
     }
     if (isTyping || isManualEventOpen || event.altKey || event.metaKey) return;
@@ -1140,13 +1147,42 @@ function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, tag
   );
 }
 
+const CHARACTER_SUGGESTIONS = ["Mario", "Pikachu", "Fox", "Falco", "Marth", "Lucina", "Joker", "Steve", "Sonic", "Cloud", "Pyra/Mythra", "Roy", "Wolf", "Snake", "Peach", "Palutena", "Inkling", "Mr. Game & Watch"];
+
+/** Click-to-edit text cell: Enter/blur commits, Escape cancels. */
+function InlineTextCell({ display, initialValue, label, listId, inputClassName, onCommit }: { display: React.ReactNode; initialValue: string; label: string; listId?: string; inputClassName?: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  if (draft === null) {
+    return <button type="button" aria-label={`Edit ${label}`} onClick={() => setDraft(initialValue)} className="w-full min-w-0 truncate rounded border border-transparent px-2 py-1 text-left hover:border-border">{display}</button>;
+  }
+  const finish = (commit: boolean) => {
+    if (commit && draft !== initialValue) onCommit(draft);
+    setDraft(null);
+  };
+  return (
+    <input autoFocus aria-label={label} list={listId} value={draft} onChange={(changeEvent) => setDraft(changeEvent.target.value)} onBlur={() => finish(true)}
+      onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true); } else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false); } }}
+      className={cn("h-7 w-full min-w-0 rounded border border-primary bg-input/40 px-2 text-xs outline-none", inputClassName)} />
+  );
+}
+
 function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBeginTextEdit, onCommitTextEdit }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>, mode?: "action" | "text") => void; onDelete: () => void; onBeginTextEdit: () => void; onCommitTextEdit: () => void }) {
   const cellForColumn = (columnId: TableColumnId) => {
     switch (columnId) {
-      case "eventType": return <span className={cn("font-medium", event.eventType === "Hit Received" && "text-destructive", event.eventType === "Hit Dealt" && "text-success")}>{event.eventType}</span>;
-      case "character": return <span className="text-muted-foreground">{event.character ?? "—"}</span>;
-      case "timestamp": return <Button variant="ghost" size="sm" className="h-7 px-2 font-mono text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play />{formatTimestamp(event.timestamp)}</Button>;
-      case "damage": return <span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>;
+      case "eventType": return (
+        <select aria-label={`Event type at ${formatTimestamp(event.timestamp)}`} value={event.eventType} onChange={(changeEvent) => onUpdate({ eventType: changeEvent.target.value as AnalysisEventType })}
+          className={cn("h-7 w-full min-w-0 cursor-pointer rounded border border-transparent bg-transparent px-1 text-xs font-medium outline-none hover:border-border focus:border-primary", event.eventType === "Hit Received" && "text-destructive", event.eventType === "Hit Dealt" && "text-success")}>
+          {ALL_EVENT_TYPES.map((type) => <option key={type} value={type} className="bg-card text-foreground">{type}</option>)}
+        </select>
+      );
+      case "character": return <InlineTextCell label={`character at ${formatTimestamp(event.timestamp)}`} listId="character-suggestions" initialValue={event.character ?? ""} display={<span className="text-muted-foreground">{event.character ?? "—"}</span>} onCommit={(value) => onUpdate({ character: parseCharacterInput(value) })} />;
+      case "timestamp": return (
+        <div className="flex items-center gap-0.5">
+          <Button variant="ghost" size="icon" className="size-7 shrink-0 text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play /></Button>
+          <InlineTextCell label={`timestamp at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={formatTimestampInput(event.timestamp)} display={<span className="font-mono text-primary">{formatTimestamp(event.timestamp)}</span>} onCommit={(value) => { const seconds = parseTimestampInput(value); if (seconds !== null) onUpdate({ timestamp: seconds }); }} />
+        </div>
+      );
+      case "damage": return <InlineTextCell label={`damage at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={event.damage === null ? "" : event.damage.toFixed(1)} display={<span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>} onCommit={(value) => onUpdate({ damage: parseDamageInput(value) })} />;
       case "tags": return <InlineTags tags={event.tags} onChange={(tags) => onUpdate({ tags })} />;
       case "note": return <input aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true" onFocus={onBeginTextEdit} onBlur={onCommitTextEdit} onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value }, "text")} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
       case "secondsSincePrevious": return <span className="font-mono text-muted-foreground">{event.secondsSincePrevious === null ? "—" : `${event.secondsSincePrevious.toFixed(1)}s`}</span>;
@@ -1248,19 +1284,41 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
   onTagsChange: (tags: string[]) => void;
   onSave: () => void;
 }) {
+  const eventTypeRef = useRef<HTMLSelectElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const tagRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const focusTag = (index: number) => tagRefs.current[index]?.focus();
+  const onTagKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const count = STARTER_TAGS.length;
+    const positions = tagRefs.current.map((element) => {
+      const rect = element?.getBoundingClientRect();
+      return { top: element?.offsetTop ?? rect?.top ?? 0, left: element?.offsetLeft ?? rect?.left ?? 0 };
+    });
+    const go = (result: number | "before" | "after") => {
+      if (result === "before") eventTypeRef.current?.focus();
+      else if (result === "after") noteRef.current?.focus();
+      else focusTag(result);
+    };
+    if (keyEvent.key === "ArrowLeft") go(handleArrowLeft(index, count));
+    else if (keyEvent.key === "ArrowRight") go(handleArrowRight(index, count));
+    else if (keyEvent.key === "ArrowUp") go(handleArrowUp(positions, index));
+    else if (keyEvent.key === "ArrowDown") go(handleArrowDown(positions, index));
+    else return;
+    keyEvent.preventDefault();
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-card max-w-xl">
+      <DialogContent className="border-border bg-card max-w-xl" onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter" && (keyEvent.ctrlKey || keyEvent.metaKey)) { keyEvent.preventDefault(); onSave(); } }}>
         <DialogHeader><DialogTitle>Add manual event</DialogTitle><DialogDescription>Capture a meaningful moment at the current playhead.</DialogDescription></DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-[120px_1fr] gap-3">
             <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={formatTimestamp(timestamp)} disabled className="mt-1 font-mono" /></label>
-            <label className="text-xs font-medium text-muted-foreground">Event type<select aria-label="Event type" value={eventType} onChange={(event) => onEventTypeChange(event.target.value as AnalysisEventType)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring">{MANUAL_EVENT_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
+            <label className="text-xs font-medium text-muted-foreground">Event type<select ref={eventTypeRef} aria-label="Event type" value={eventType} onChange={(event) => onEventTypeChange(event.target.value as AnalysisEventType)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring">{MANUAL_EVENT_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
           </div>
-           <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag) => <Button key={tag} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => onTagsChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag])}>{tag}</Button>)}</div></fieldset>
-          <label className="text-xs font-medium text-muted-foreground">Event note<Textarea aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
+           <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag, index) => <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => onTagsChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag])}>{tag}</Button>)}</div></fieldset>
+          <label className="text-xs font-medium text-muted-foreground">Event note<Textarea ref={noteRef} aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={onSave}>Save event</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={onSave} title="Ctrl+Enter / Cmd+Enter">Save event</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

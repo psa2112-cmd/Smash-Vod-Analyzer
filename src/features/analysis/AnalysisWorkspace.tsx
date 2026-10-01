@@ -28,7 +28,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { formatTimestampInput, handleArrowDown, handleArrowLeft, handleArrowRight, handleArrowUp, parseCharacterInput, parseDamageInput, parseTimestampInput } from "./inlineEditing";
+import { formatTimestampInput, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions } from "./inlineEditing";
 import gameplayImage from "@/assets/analysis-gameplay.jpg";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -195,7 +195,20 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [notes, setNotes] = useState("");
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [isManualEventOpen, setIsManualEventOpen] = useState(false);
+  const [isManualEventOpen, setIsManualEventOpenState] = useState(false);
+  const wasPlayingBeforeManualEventRef = useRef(false);
+  /** Pauses playback while the add-event screen is open and restores the prior play state on close. */
+  const setIsManualEventOpen = (shouldOpen: boolean) => {
+    if (shouldOpen === isManualEventOpen) return;
+    if (shouldOpen) {
+      wasPlayingBeforeManualEventRef.current = isPlaying;
+      setIsPlaying(false);
+    } else {
+      if (wasPlayingBeforeManualEventRef.current) setIsPlaying(true);
+      wasPlayingBeforeManualEventRef.current = false;
+    }
+    setIsManualEventOpenState(shouldOpen);
+  };
   const [manualEventType, setManualEventType] = useState<AnalysisEventType>("Neutral Win");
   const [manualNote, setManualNote] = useState("");
   const [manualTags, setManualTags] = useState<string[]>([]);
@@ -429,6 +442,20 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     applySnapshot(result.snapshot);
   };
 
+  /** A cell editing session: Escape rewinds both the row data and the undo stack to this point. */
+  const cellSessionRef = useRef<{ history: UndoHistory; snapshot: WorkspaceSnapshot } | null>(null);
+  const beginCellSession = () => {
+    cellSessionRef.current = { history: historyRef.current, snapshot: createSnapshot(dataRef.current.events, dataRef.current.notes) };
+  };
+  const endCellSession = (discard: boolean) => {
+    const session = cellSessionRef.current;
+    cellSessionRef.current = null;
+    if (!discard || !session) return;
+    textEditBaselineRef.current = null;
+    historyRef.current = session.history;
+    applySnapshot(session.snapshot);
+  };
+
   const hotkeyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
   hotkeyHandlerRef.current = (event: KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s") {
@@ -477,6 +504,12 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     if (key === " ") {
       event.preventDefault();
       setIsPlaying((playing) => !playing);
+    } else if (key === "p" && !event.shiftKey) {
+      // Seek to the selected row through the same jump used by timestamp clicks.
+      const selectedEvent = events.find((item) => item.id === selectedEventId);
+      if (!selectedEvent) return;
+      event.preventDefault();
+      jumpToEvent(selectedEvent);
     } else if (key in seekOffsets) {
       event.preventDefault();
       const offset = seekOffsets[key] ?? 0;
@@ -699,6 +732,9 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
                 onAddEvent={() => setIsManualEventOpen(true)}
                 onBeginTextEdit={beginTextEdit}
                 onCommitTextEdit={commitTextEdit}
+                onSelectRow={setSelectedEventId}
+                onBeginCellSession={beginCellSession}
+                onEndCellSession={endCellSession}
               />
               </ResizablePanel>
               <ResizableHandle aria-label="Resize event table and lower panels" className={VERTICAL_HANDLE_CLASS}><span aria-hidden className="h-1 w-12 rounded-full bg-muted-foreground/50 group-hover:bg-primary-foreground/70" /></ResizableHandle>
@@ -960,7 +996,7 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
   );
 }
 
-function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePreferences, onTablePreferencesChange, onFiltersChange, onSort, onJump, onUpdate, onDelete, onAddEvent, onBeginTextEdit, onCommitTextEdit }: {
+function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePreferences, onTablePreferencesChange, onFiltersChange, onSort, onJump, onUpdate, onDelete, onAddEvent, onBeginTextEdit, onCommitTextEdit, onSelectRow, onBeginCellSession, onEndCellSession }: {
   events: AnalysisEvent[];
   totalCount: number;
   selectedEventId: string | null;
@@ -975,6 +1011,9 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
   onBeginTextEdit: () => void;
   onCommitTextEdit: () => void;
   onAddEvent: () => void;
+  onSelectRow: (id: string) => void;
+  onBeginCellSession: () => void;
+  onEndCellSession: (discard: boolean) => void;
 }) {
   const [draggedColumnId, setDraggedColumnId] = useState<TableColumnId | null>(null);
   const orderedColumns = tablePreferences.order
@@ -1002,6 +1041,56 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
     };
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", stopResize);
+  };
+
+  // Excel-style active cell: one selected cell; editing state applies to it.
+  const [activeCell, setActiveCell] = useState<{ rowId: string; columnId: TableColumnId } | null>(null);
+  const [isCellEditing, setIsCellEditing] = useState(false);
+  const cellRefs = useRef(new Map<string, HTMLTableCellElement>());
+  const focusCell = (rowId: string, columnId: TableColumnId) => {
+    requestAnimationFrame(() => {
+      const element = cellRefs.current.get(`${rowId}:${columnId}`);
+      if (!element) return;
+      element.focus({ preventScroll: true });
+      element.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  };
+  const handleCellFocus = (rowId: string, columnId: TableColumnId, isCellItself: boolean) => {
+    setActiveCell({ rowId, columnId });
+    onSelectRow(rowId);
+    if (isCellItself) setIsCellEditing(false);
+    else if (columnId === "note" || columnId === "eventType") { setIsCellEditing(true); onBeginCellSession(); }
+  };
+  const endCellEdit = (refocusCell: boolean) => {
+    setIsCellEditing(false);
+    onEndCellSession(false);
+    if (refocusCell && activeCell) focusCell(activeCell.rowId, activeCell.columnId);
+  };
+  /** Escape in a cell: drop the edit and rewind the undo stack to the state from before it opened. */
+  const cancelCellEdit = () => {
+    setIsCellEditing(false);
+    onEndCellSession(true);
+    if (activeCell) focusCell(activeCell.rowId, activeCell.columnId);
+  };
+  const handleCellKeyDown = (keyEvent: React.KeyboardEvent<HTMLTableCellElement>, rowId: string, columnId: TableColumnId) => {
+    if (keyEvent.ctrlKey || keyEvent.metaKey || keyEvent.altKey) return;
+    const rowIndex = events.findIndex((event) => event.id === rowId);
+    const columnIndex = visibleColumns.findIndex((column) => column.id === columnId);
+    const moves: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    const move = moves[keyEvent.key];
+    if (move) {
+      keyEvent.preventDefault();
+      const nextRow = events[Math.min(events.length - 1, Math.max(0, rowIndex + move[0]))];
+      const nextColumn = visibleColumns[Math.min(visibleColumns.length - 1, Math.max(0, columnIndex + move[1]))];
+      if (!nextRow || !nextColumn) return;
+      setActiveCell({ rowId: nextRow.id, columnId: nextColumn.id });
+      onSelectRow(nextRow.id);
+      focusCell(nextRow.id, nextColumn.id);
+    } else if (keyEvent.key === "Enter" && columnId !== "secondsSincePrevious") {
+      keyEvent.preventDefault();
+      setIsCellEditing(true);
+      onBeginCellSession();
+    }
   };
 
   return (
@@ -1033,7 +1122,7 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
           <Input aria-label="Search events and notes" value={filters.query} onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })} placeholder="Search notes, tags, events…" className="h-8 pl-8 text-xs" />
         </div>
       </div>
-      <div className="analysis-table-scrollbar min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto">
         <datalist id="character-suggestions">{CHARACTER_SUGGESTIONS.map((name) => <option key={name} value={name} />)}</datalist>
         <table className="table-fixed text-xs" style={{ width: tableWidth }}>
           <colgroup>
@@ -1062,9 +1151,21 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
             </tr>
           </thead>
           <tbody>
-            {events.map((event) => (
-               <EventRow key={event.id} event={event} columns={visibleColumns} selected={selectedEventId === event.id} onJump={() => onJump(event)} onUpdate={(updates, mode) => onUpdate(event.id, updates, mode)} onDelete={() => onDelete(event.id)} onBeginTextEdit={onBeginTextEdit} onCommitTextEdit={onCommitTextEdit} />
-            ))}
+            {events.map((event) => {
+              const isActiveRow = activeCell?.rowId === event.id;
+              return (
+                <EventRow key={event.id} event={event} columns={visibleColumns} selected={selectedEventId === event.id} onJump={() => onJump(event)} onUpdate={(updates, mode) => onUpdate(event.id, updates, mode)} onDelete={() => onDelete(event.id)} onBeginTextEdit={onBeginTextEdit} onCommitTextEdit={onCommitTextEdit}
+                  activeColumnId={isActiveRow ? activeCell.columnId : null}
+                  isEditing={isActiveRow && isCellEditing}
+                  registerCell={(columnId, element) => { if (element) cellRefs.current.set(`${event.id}:${columnId}`, element); else cellRefs.current.delete(`${event.id}:${columnId}`); }}
+                  onCellFocus={(columnId, isCellItself) => handleCellFocus(event.id, columnId, isCellItself)}
+                  onCellKeyDown={(keyEvent, columnId) => handleCellKeyDown(keyEvent, event.id, columnId)}
+                  onStartEdit={(columnId) => { setActiveCell({ rowId: event.id, columnId }); setIsCellEditing(true); onBeginCellSession(); onSelectRow(event.id); }}
+                  onEndEdit={endCellEdit}
+                  onCancelCellEdit={cancelCellEdit}
+                />
+              );
+            })}
           </tbody>
         </table>
         {events.length === 0 && (
@@ -1150,73 +1251,154 @@ function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, tag
 
 const CHARACTER_SUGGESTIONS = ["Mario", "Pikachu", "Fox", "Falco", "Marth", "Lucina", "Joker", "Steve", "Sonic", "Cloud", "Pyra/Mythra", "Roy", "Wolf", "Snake", "Peach", "Palutena", "Inkling", "Mr. Game & Watch"];
 
-/** Click-to-edit text cell: Enter/blur commits, Escape cancels. */
-function InlineTextCell({ display, initialValue, label, listId, inputClassName, onCommit }: { display: React.ReactNode; initialValue: string; label: string; listId?: string; inputClassName?: string; onCommit: (value: string) => void }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  if (draft === null) {
-    return <button type="button" aria-label={`Edit ${label}`} onClick={() => setDraft(initialValue)} className="w-full min-w-0 truncate rounded border border-transparent px-2 py-1 text-left hover:border-border">{display}</button>;
+/** Controlled click-to-edit text cell: Enter/blur commits, Escape cancels. */
+function InlineTextCell({ display, initialValue, label, listId, inputClassName, editing, onStartEdit, onEndEdit, onCommit }: { display: React.ReactNode; initialValue: string; label: string; listId?: string; inputClassName?: string; editing: boolean; onStartEdit: () => void; onEndEdit: (refocusCell: boolean) => void; onCommit: (value: string) => void }) {
+  if (!editing) {
+    return <button type="button" aria-label={`Edit ${label}`} onClick={onStartEdit} className="w-full min-w-0 truncate rounded border border-transparent px-2 py-1 text-left hover:border-border">{display}</button>;
   }
-  const finish = (commit: boolean) => {
+  return <InlineTextEditor initialValue={initialValue} label={label} listId={listId} inputClassName={inputClassName} onEndEdit={onEndEdit} onCommit={onCommit} />;
+}
+
+function InlineTextEditor({ initialValue, label, listId, inputClassName, onEndEdit, onCommit }: { initialValue: string; label: string; listId?: string | undefined; inputClassName?: string | undefined; onEndEdit: (refocusCell: boolean) => void; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(initialValue);
+  const finishedRef = useRef(false);
+  const finish = (commit: boolean, refocusCell: boolean) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
     if (commit && draft !== initialValue) onCommit(draft);
-    setDraft(null);
+    onEndEdit(refocusCell);
   };
   return (
-    <input autoFocus aria-label={label} list={listId} value={draft} onChange={(changeEvent) => setDraft(changeEvent.target.value)} onBlur={() => finish(true)}
-      onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true); } else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false); } }}
+    <input autoFocus aria-label={label} list={listId} value={draft} onChange={(changeEvent) => setDraft(changeEvent.target.value)} onBlur={() => finish(true, false)}
+      onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true, true); } else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false, true); } }}
       className={cn("h-7 w-full min-w-0 rounded border border-primary bg-input/40 px-2 text-xs outline-none", inputClassName)} />
   );
 }
 
-function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBeginTextEdit, onCommitTextEdit }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>, mode?: "action" | "text") => void; onDelete: () => void; onBeginTextEdit: () => void; onCommitTextEdit: () => void }) {
+/** Focus-driven editors (select, note input): grab focus when the cell enters edit mode. */
+function useFocusWhenEditing<T extends HTMLElement>(editing: boolean) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (editing && document.activeElement !== ref.current) ref.current?.focus();
+  }, [editing]);
+  return ref;
+}
+
+interface CellEditingProps {
+  activeColumnId: TableColumnId | null;
+  isEditing: boolean;
+  registerCell: (columnId: TableColumnId, element: HTMLTableCellElement | null) => void;
+  onCellFocus: (columnId: TableColumnId, isCellItself: boolean) => void;
+  onCellKeyDown: (keyEvent: React.KeyboardEvent<HTMLTableCellElement>, columnId: TableColumnId) => void;
+  onStartEdit: (columnId: TableColumnId) => void;
+  onEndEdit: (refocusCell: boolean) => void;
+  onCancelCellEdit: () => void;
+}
+
+function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBeginTextEdit, onCommitTextEdit, activeColumnId, isEditing, registerCell, onCellFocus, onCellKeyDown, onStartEdit, onEndEdit, onCancelCellEdit }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>, mode?: "action" | "text") => void; onDelete: () => void; onBeginTextEdit: () => void; onCommitTextEdit: () => void } & CellEditingProps) {
+  const isCellEditing = (columnId: TableColumnId) => isEditing && activeColumnId === columnId;
+  const selectRef = useFocusWhenEditing<HTMLSelectElement>(isCellEditing("eventType"));
+  const noteRef = useFocusWhenEditing<HTMLInputElement>(isCellEditing("note"));
+  const originalEventTypeRef = useRef(event.eventType);
+  const originalNoteRef = useRef(event.note);
+  const textCellProps = (columnId: TableColumnId) => ({ editing: isCellEditing(columnId), onStartEdit: () => onStartEdit(columnId), onEndEdit });
   const cellForColumn = (columnId: TableColumnId) => {
     switch (columnId) {
       case "eventType": return (
-        <select aria-label={`Event type at ${formatTimestamp(event.timestamp)}`} value={event.eventType} onChange={(changeEvent) => onUpdate({ eventType: changeEvent.target.value as AnalysisEventType })}
+        <select ref={selectRef} aria-label={`Event type at ${formatTimestamp(event.timestamp)}`} value={event.eventType} onChange={(changeEvent) => onUpdate({ eventType: changeEvent.target.value as AnalysisEventType })}
+          onFocus={() => { originalEventTypeRef.current = event.eventType; }}
+          onBlur={() => onEndEdit(false)}
+          onKeyDown={(keyEvent) => {
+            if (keyEvent.key === "Enter") { keyEvent.preventDefault(); onEndEdit(true); }
+            else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); if (event.eventType !== originalEventTypeRef.current) onUpdate({ eventType: originalEventTypeRef.current }); onEndEdit(true); }
+          }}
           className={cn("h-7 w-full min-w-0 cursor-pointer rounded border border-transparent bg-transparent px-1 text-xs font-medium outline-none hover:border-border focus:border-primary", event.eventType === "Hit Received" && "text-destructive", event.eventType === "Hit Dealt" && "text-success")}>
           {ALL_EVENT_TYPES.map((type) => <option key={type} value={type} className="bg-card text-foreground">{type}</option>)}
         </select>
       );
-      case "character": return <InlineTextCell label={`character at ${formatTimestamp(event.timestamp)}`} listId="character-suggestions" initialValue={event.character ?? ""} display={<span className="text-muted-foreground">{event.character ?? "—"}</span>} onCommit={(value) => onUpdate({ character: parseCharacterInput(value) })} />;
+      case "character": return <InlineTextCell {...textCellProps("character")} label={`character at ${formatTimestamp(event.timestamp)}`} listId="character-suggestions" initialValue={event.character ?? ""} display={<span className="text-muted-foreground">{event.character ?? "—"}</span>} onCommit={(value) => onUpdate({ character: parseCharacterInput(value) })} />;
       case "timestamp": return (
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" className="size-7 shrink-0 text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play /></Button>
-          <InlineTextCell label={`timestamp at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={formatTimestampInput(event.timestamp)} display={<span className="font-mono text-primary">{formatTimestamp(event.timestamp)}</span>} onCommit={(value) => { const seconds = parseTimestampInput(value); if (seconds !== null) onUpdate({ timestamp: seconds }); }} />
+          <InlineTextCell {...textCellProps("timestamp")} label={`timestamp at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={formatTimestampInput(event.timestamp)} display={<span className="font-mono text-primary">{formatTimestamp(event.timestamp)}</span>} onCommit={(value) => { const seconds = parseTimestampInput(value); if (seconds !== null) onUpdate({ timestamp: seconds }); }} />
         </div>
       );
-      case "damage": return <InlineTextCell label={`damage at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={event.damage === null ? "" : event.damage.toFixed(1)} display={<span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>} onCommit={(value) => onUpdate({ damage: parseDamageInput(value) })} />;
-      case "tags": return <InlineTags tags={event.tags} onChange={(tags) => onUpdate({ tags })} />;
-      case "note": return <input aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true" onFocus={onBeginTextEdit} onBlur={onCommitTextEdit} onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value }, "text")} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
+      case "damage": return <InlineTextCell {...textCellProps("damage")} label={`damage at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={event.damage === null ? "" : event.damage.toFixed(1)} display={<span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>} onCommit={(value) => onUpdate({ damage: parseDamageInput(value) })} />;
+      case "tags": return <InlineTags tags={event.tags} editing={isCellEditing("tags")} onStartEdit={() => onStartEdit("tags")} onEndEdit={onEndEdit} onCancel={onCancelCellEdit} onChange={(tags) => onUpdate({ tags })} />;
+      case "note": return <input ref={noteRef} aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true"
+        onFocus={() => { originalNoteRef.current = event.note; onBeginTextEdit(); }}
+        onBlur={() => { onCommitTextEdit(); onEndEdit(false); }}
+        onKeyDown={(keyEvent) => {
+          if (keyEvent.key === "Enter") { keyEvent.preventDefault(); onEndEdit(true); }
+          else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); if (event.note !== originalNoteRef.current) onUpdate({ note: originalNoteRef.current }, "text"); onEndEdit(true); }
+        }}
+        onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value }, "text")} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
       case "secondsSincePrevious": return <span className="font-mono text-muted-foreground">{event.secondsSincePrevious === null ? "—" : `${event.secondsSincePrevious.toFixed(1)}s`}</span>;
     }
   };
   return (
     <tr className={cn("border-b border-border/70 transition-colors hover:bg-secondary/35", selected && "bg-primary/8 shadow-[inset_2px_0_var(--color-primary)]")}>
-      {columns.map((column) => <td key={column.id} className="overflow-hidden px-3 py-2 align-middle">{cellForColumn(column.id)}</td>)}
+      {columns.map((column) => {
+        const isActiveCell = activeColumnId === column.id;
+        return (
+          <td key={column.id} ref={(element) => registerCell(column.id, element)} tabIndex={isActiveCell ? 0 : -1} aria-selected={isActiveCell}
+            onFocus={(focusEvent) => onCellFocus(column.id, focusEvent.target === focusEvent.currentTarget)}
+            onKeyDown={(keyEvent) => { if (keyEvent.target === keyEvent.currentTarget) onCellKeyDown(keyEvent, column.id); }}
+            className={cn("overflow-hidden px-3 py-2 align-middle outline-none", isActiveCell && "rounded-sm ring-2 ring-inset ring-primary")}>
+            {cellForColumn(column.id)}
+          </td>
+        );
+      })}
       <td className="pr-2"><Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive" onClick={onDelete} aria-label={`Delete event at ${formatTimestamp(event.timestamp)}`}><Trash2 /></Button></td>
     </tr>
   );
 }
 
-function InlineTags({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
-  const [editing, setEditing] = useState(false);
+/** Table tagger: arrows navigate (shared with Add Event), Shift toggles the focused tag, Enter saves, Escape discards. */
+function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange }: { tags: string[]; editing: boolean; onStartEdit: () => void; onEndEdit: (refocusCell: boolean) => void; onCancel: () => void; onChange: (tags: string[]) => void }) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const tagRefs = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => {
     if (!editing) return;
+    tagRefs.current[0]?.focus();
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!editorRef.current?.contains(event.target as Node)) setEditing(false);
+      if (!editorRef.current?.contains(event.target as Node)) onEndEdit(false);
     };
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
+  const toggleTag = (index: number) => {
+    const tag = STARTER_TAGS[index];
+    if (!tag) return;
+    onChange(tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag]);
+  };
+  const onTagKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    // Toggle on the press itself so the tag flips with no perceptible delay.
+    if (keyEvent.key === "Shift") {
+      if (!keyEvent.repeat) toggleTag(index);
+      return;
+    }
+    const result = navigateTagGrid(keyEvent.key, readGridPositions(tagRefs.current.slice(0, STARTER_TAGS.length)), index);
+    if (result === null) return;
+    keyEvent.preventDefault();
+    if (typeof result === "number") tagRefs.current[result]?.focus();
+  };
   return editing ? (
-    <div ref={editorRef} className="flex flex-wrap gap-1 rounded border border-primary/40 bg-card p-1.5">
-      {STARTER_TAGS.map((tag) => (
-         <Button key={tag} variant={tags.includes(tag) ? "default" : "ghost"} aria-pressed={tags.includes(tag)} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => onChange(tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag])}>{tag}</Button>
+    <div ref={editorRef} className="flex flex-wrap gap-1 rounded border border-primary/40 bg-card p-1.5"
+      onKeyDown={(keyEvent) => {
+        // Space belongs to playback, so it must never activate a tag button.
+        if (keyEvent.key === " ") { keyEvent.preventDefault(); return; }
+        if (keyEvent.key === "Enter") { keyEvent.preventDefault(); keyEvent.stopPropagation(); onEndEdit(true); }
+        else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); keyEvent.stopPropagation(); onCancel(); }
+      }}>
+      {STARTER_TAGS.map((tag, index) => (
+        <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} variant={tags.includes(tag) ? "default" : "ghost"} aria-pressed={tags.includes(tag)} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => toggleTag(index)}>{tag}</Button>
       ))}
-      <Button variant="ghost" size="icon" className="size-6" onClick={() => setEditing(false)} aria-label="Close tag editor"><X /></Button>
+      <Button variant="ghost" size="icon" className="size-6" onClick={() => onEndEdit(true)} aria-label="Close tag editor"><X /></Button>
     </div>
   ) : (
-    <Button variant="ghost" className="h-auto min-h-7 w-full justify-start whitespace-normal px-1 py-1" onClick={() => setEditing(true)} aria-label="Edit tags">
+    <Button variant="ghost" className="h-auto min-h-7 w-full justify-start whitespace-normal px-1 py-1" onClick={onStartEdit} aria-label="Edit tags">
       <span className="flex flex-wrap gap-1">{tags.length ? tags.map((tag) => <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px]">{tag}</Badge>) : <span className="text-muted-foreground">Add tags</span>}</span>
     </Button>
   );
@@ -1285,27 +1467,27 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
   onTagsChange: (tags: string[]) => void;
   onSave: () => void;
 }) {
-  const eventTypeRef = useRef<HTMLSelectElement>(null);
+  const eventTypeRef = useRef<HTMLButtonElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const tagRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const focusTag = (index: number) => tagRefs.current[index]?.focus();
+  const toggleTag = (index: number) => {
+    const tag = STARTER_TAGS[index];
+    if (!tag) return;
+    onTagsChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag]);
+  };
   const onTagKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const count = STARTER_TAGS.length;
-    const positions = tagRefs.current.map((element) => {
-      const rect = element?.getBoundingClientRect();
-      return { top: element?.offsetTop ?? rect?.top ?? 0, left: element?.offsetLeft ?? rect?.left ?? 0 };
-    });
-    const go = (result: number | "before" | "after") => {
-      if (result === "before") eventTypeRef.current?.focus();
-      else if (result === "after") noteRef.current?.focus();
-      else focusTag(result);
-    };
-    if (keyEvent.key === "ArrowLeft") go(handleArrowLeft(index, count));
-    else if (keyEvent.key === "ArrowRight") go(handleArrowRight(index, count));
-    else if (keyEvent.key === "ArrowUp") go(handleArrowUp(positions, index));
-    else if (keyEvent.key === "ArrowDown") go(handleArrowDown(positions, index));
-    else return;
+    // Toggle on the press itself so the tag flips with no perceptible delay.
+    if (keyEvent.key === "Shift") {
+      if (!keyEvent.repeat) toggleTag(index);
+      return;
+    }
+    const result = navigateTagGrid(keyEvent.key, readGridPositions(tagRefs.current), index);
+    if (result === null) return;
     keyEvent.preventDefault();
+    if (result === "before") eventTypeRef.current?.focus();
+    else if (result === "after") noteRef.current?.focus();
+    else focusTag(result);
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1314,13 +1496,97 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-[120px_1fr] gap-3">
             <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={formatTimestamp(timestamp)} disabled className="mt-1 font-mono" /></label>
-            <label className="text-xs font-medium text-muted-foreground">Event type<select ref={eventTypeRef} aria-label="Event type" value={eventType} onChange={(event) => onEventTypeChange(event.target.value as AnalysisEventType)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring">{MANUAL_EVENT_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
+            <div className="text-xs font-medium text-muted-foreground"><span id="manual-event-type-label">Event type</span><EventTypeListbox triggerRef={eventTypeRef} value={eventType} onChange={onEventTypeChange} onArrowDownWhenClosed={() => focusTag(0)} /></div>
           </div>
-           <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag, index) => <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => onTagsChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag])}>{tag}</Button>)}</div></fieldset>
-          <label className="text-xs font-medium text-muted-foreground">Event note<Textarea ref={noteRef} aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
+           <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag, index) => <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => toggleTag(index)}>{tag}</Button>)}</div></fieldset>
+          <label className="text-xs font-medium text-muted-foreground">Event note<Textarea ref={noteRef} aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} onKeyDown={(keyEvent) => { const target = keyEvent.currentTarget; if (keyEvent.key === "ArrowUp" && target.selectionStart === 0 && target.selectionEnd === 0) { keyEvent.preventDefault(); focusTag(STARTER_TAGS.length - 1); } }} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={onSave} title="Ctrl+Enter / Cmd+Enter">Save event</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+/** Keyboard-friendly event type picker: Enter toggles the list, arrows change the type while open, ArrowDown leaves when closed. */
+function EventTypeListbox({ triggerRef, value, onChange, onArrowDownWhenClosed }: {
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
+  value: AnalysisEventType;
+  onChange: (type: AnalysisEventType) => void;
+  onArrowDownWhenClosed: () => void;
+}) {
+  const [isListOpen, setIsListOpen] = useState(false);
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const currentIndex = Math.max(0, MANUAL_EVENT_TYPES.indexOf(value));
+  const step = (offset: number) => {
+    const nextIndex = Math.min(MANUAL_EVENT_TYPES.length - 1, Math.max(0, currentIndex + offset));
+    const nextType = MANUAL_EVENT_TYPES[nextIndex];
+    if (nextType) onChange(nextType);
+  };
+  // Keep the highlighted option visible: once it passes the vertical midpoint of
+  // the list, scroll so it sits at the midpoint, revealing the upcoming options.
+  useEffect(() => {
+    if (!isListOpen) return;
+    const list = listRef.current;
+    const active = list?.querySelector<HTMLLIElement>('[aria-selected="true"]');
+    if (!list || !active) return;
+    const listRect = list.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const optionOffset = activeRect.top - listRect.top + list.scrollTop;
+    const midpoint = list.clientHeight / 2;
+    if (optionOffset - list.scrollTop > midpoint) {
+      list.scrollTop = optionOffset - midpoint;
+    } else if (optionOffset < list.scrollTop + midpoint) {
+      list.scrollTop = Math.max(0, optionOffset - midpoint);
+    }
+  }, [isListOpen, value]);
+  const onKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (keyEvent.key === "Enter" && !keyEvent.ctrlKey && !keyEvent.metaKey) {
+      keyEvent.preventDefault();
+      setIsListOpen((open) => !open);
+    } else if (keyEvent.key === "Escape" && isListOpen) {
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      setIsListOpen(false);
+    } else if (keyEvent.key === "ArrowDown") {
+      keyEvent.preventDefault();
+      if (isListOpen) step(1);
+      else onArrowDownWhenClosed();
+    } else if (keyEvent.key === "ArrowUp" && isListOpen) {
+      keyEvent.preventDefault();
+      step(-1);
+    }
+  };
+  return (
+    <div className="relative mt-1">
+      <button
+        ref={triggerRef}
+        type="button"
+        role="combobox"
+        aria-labelledby="manual-event-type-label"
+        aria-label="Event type"
+        aria-expanded={isListOpen}
+        aria-controls="manual-event-type-list"
+        onClick={() => setIsListOpen((open) => !open)}
+        onKeyDown={onKeyDown}
+        onBlur={() => setIsListOpen(false)}
+        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-left text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+      >
+        <span>{value}</span><span aria-hidden="true" className="text-muted-foreground">▾</span>
+      </button>
+      {isListOpen && (
+        <ul ref={listRef} id="manual-event-type-list" role="listbox" aria-label="Event types" className="absolute z-50 mt-1 max-h-64 w-full overflow-auto rounded-md border border-border bg-popover py-1 text-sm text-popover-foreground shadow-md">
+          {MANUAL_EVENT_TYPES.map((type) => (
+            <li
+              key={type}
+              role="option"
+              aria-selected={type === value}
+              onMouseDown={(mouseEvent) => { mouseEvent.preventDefault(); onChange(type); setIsListOpen(false); }}
+              className={cn("cursor-pointer px-3 py-1.5", type === value ? "bg-accent text-accent-foreground" : "hover:bg-muted")}
+            >
+              {type}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

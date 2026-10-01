@@ -73,3 +73,18 @@ export function handleArrowUp(positions: GridItemPosition[], current: number): G
 export function handleArrowDown(positions: GridItemPosition[], current: number): GridNavigationResult {
   return verticalMove(positions, current, 1);
 }
+
+/** Shared arrow-key navigation for tag grids (Add Event tagger and table tagger); null for non-arrow keys. */
+export function navigateTagGrid(key: string, positions: GridItemPosition[], current: number): GridNavigationResult | null {
+  const count = positions.length;
+  if (key === "ArrowLeft") return handleArrowLeft(current, count);
+  if (key === "ArrowRight") return handleArrowRight(current, count);
+  if (key === "ArrowUp") return handleArrowUp(positions, current);
+  if (key === "ArrowDown") return handleArrowDown(positions, current);
+  return null;
+}
+
+/** Reads offset positions of rendered tag buttons for grid navigation. */
+export function readGridPositions(elements: (HTMLElement | null)[]): GridItemPosition[] {
+  return elements.map((element) => ({ top: element?.offsetTop ?? 0, left: element?.offsetLeft ?? 0 }));
+}

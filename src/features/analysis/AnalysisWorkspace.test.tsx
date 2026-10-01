@@ -99,10 +99,51 @@ describe("AnalysisWorkspace", () => {
 
     await user.click(screen.getByRole("button", { name: /add event/i }));
     const dialog = screen.getByRole("dialog");
-    await user.selectOptions(within(dialog).getByLabelText("Event type", { exact: true }), "Neutral Win");
+    await user.click(within(dialog).getByRole("combobox", { name: "Event type" }));
+    await user.click(screen.getByRole("option", { name: "Neutral Win" }));
     await user.type(within(dialog).getByLabelText("Event note", { exact: true }), "Held center stage.");
     await user.click(within(dialog).getByRole("button", { name: /save event/i }));
     expect(screen.getByDisplayValue("Held center stage.")).toBeInTheDocument();
+  });
+
+  it("pauses playback while adding an event and resumes only if it was playing", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Play replay" }));
+    await user.click(screen.getByRole("button", { name: /add event/i }));
+    expect(screen.getByRole("button", { name: "Play replay", hidden: true })).toBeInTheDocument();
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Pause replay" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Pause replay" }));
+    await user.click(screen.getByRole("button", { name: /add event/i }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /save event/i }));
+    expect(screen.getByRole("button", { name: "Play replay" })).toBeInTheDocument();
+  });
+
+  it("moves between event type, tags and note with arrow keys", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: /add event/i }));
+    const dialog = screen.getByRole("dialog");
+    const eventType = within(dialog).getByRole("combobox", { name: "Event type" });
+    eventType.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    await user.keyboard("{ArrowDown}");
+    expect(within(dialog).getByRole("button", { name: "Landing" })).toHaveFocus();
+
+    const note = within(dialog).getByLabelText("Event note", { exact: true });
+    await user.click(note);
+    await user.type(note, "ab");
+    await user.keyboard("{ArrowUp}");
+    expect(note).toHaveFocus();
+    (note as HTMLTextAreaElement).setSelectionRange(0, 0);
+    await user.keyboard("{ArrowUp}");
+    const tagButtons = within(dialog).getAllByRole("button").filter((button) => button.hasAttribute("aria-pressed"));
+    expect(tagButtons[tagButtons.length - 1]).toHaveFocus();
   });
 
   it("edits notes and toggles workspace panels", async () => {

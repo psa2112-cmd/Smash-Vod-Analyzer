@@ -34,7 +34,6 @@ export function snapshotsEqual(left: WorkspaceSnapshot, right: WorkspaceSnapshot
       event.character === other.character &&
       event.timestamp === other.timestamp &&
       event.damage === other.damage &&
-      event.direction === other.direction &&
       event.note === other.note &&
       event.secondsSincePrevious === other.secondsSincePrevious &&
       event.tags.length === other.tags.length &&

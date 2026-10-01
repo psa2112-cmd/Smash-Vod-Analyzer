@@ -38,6 +38,41 @@ describe("AnalysisWorkspace", () => {
   });
 
 
+  it("edits damage, character, event type and timestamp inline with undo", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Edit damage at 0:18" }));
+    const damage = screen.getByRole("textbox", { name: "damage at 0:18" });
+    await user.clear(damage); await user.type(damage, "22.5%{Enter}");
+    expect(screen.getByText("22.5%")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit character at 0:18" }));
+    const character = screen.getByRole("combobox", { name: "character at 0:18" });
+    await user.clear(character); await user.type(character, "Fox{Enter}");
+    expect(screen.getByRole("button", { name: "Edit character at 0:18" })).toHaveTextContent("Fox");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Event type at 0:18" }), "Neutral Win");
+    expect(screen.getByRole("combobox", { name: "Event type at 0:18" })).toHaveValue("Neutral Win");
+    await user.click(screen.getByRole("button", { name: "Edit timestamp at 0:18" }));
+    const time = screen.getByRole("textbox", { name: "timestamp at 0:18" });
+    await user.clear(time); await user.type(time, "bad{Enter}");
+    expect(screen.getByRole("button", { name: "Edit timestamp at 0:18" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit timestamp at 0:18" }));
+    const time2 = screen.getByRole("textbox", { name: "timestamp at 0:18" });
+    await user.clear(time2); await user.type(time2, "00:20{Enter}");
+    expect(screen.getByRole("button", { name: "Edit timestamp at 0:20" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "Edit timestamp at 0:18" })).toBeInTheDocument();
+  });
+
+  it("opens the manual event dialog with Ctrl+E and saves with Ctrl+Enter", async () => {
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    fireEvent.keyDown(window, { key: "e", ctrlKey: true });
+    const note = await screen.findByRole("textbox", { name: "Event note" });
+    fireEvent.change(note, { target: { value: "Shortcut saved" } });
+    fireEvent.keyDown(note, { key: "Enter", ctrlKey: true });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Shortcut saved")).toBeInTheDocument();
+  });
+
   it("closes the tag editor when clicking outside", async () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);
@@ -53,9 +88,9 @@ describe("AnalysisWorkspace", () => {
 
     await user.click(screen.getByRole("button", { name: "Manual Events" }));
     expect(screen.getAllByText("Missed Tech Chase").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Hit Received", { selector: "span" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Event type at 0:32" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /reset filters/i }));
-    expect(screen.getAllByText("Hit Received", { selector: "span" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("combobox", { name: "Event type at 0:32" })).toBeInTheDocument();
   });
 
   it("adds a manual event at the current playhead", async () => {

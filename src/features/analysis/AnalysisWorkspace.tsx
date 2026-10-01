@@ -855,7 +855,7 @@ function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedCh
             <Check className="size-3.5" aria-hidden /> {notification}
           </div>
         )}
-        <Button size="sm" onClick={onAddEvent}><Plus /> Add event</Button>
+        <Button size="sm" onClick={onAddEvent} title="Add event (Ctrl+E / Cmd+E)"><Plus /> Add event</Button>
         <div className="mx-2 h-6 w-px bg-border" />
         <IconTip label={controlsVisible ? "Hide video controls" : "Show video controls"} onClick={onToggleControls}>
           {controlsVisible ? <EyeOff /> : <Eye />}
@@ -1034,6 +1034,7 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
         </div>
       </div>
       <div className="analysis-table-scrollbar min-h-0 flex-1 overflow-auto">
+        <datalist id="character-suggestions">{CHARACTER_SUGGESTIONS.map((name) => <option key={name} value={name} />)}</datalist>
         <table className="table-fixed text-xs" style={{ width: tableWidth }}>
           <colgroup>
             {visibleColumns.map((column) => <col key={column.id} style={{ width: tablePreferences.widths[column.id] }} />)}

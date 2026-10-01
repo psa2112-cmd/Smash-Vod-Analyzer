@@ -44,6 +44,7 @@ describe("AnalysisWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Edit damage at 0:18" }));
     const damage = screen.getByRole("textbox", { name: "damage at 0:18" });
     await user.clear(damage); await user.type(damage, "22.5%{Enter}");
+    screen.debug(screen.getByRole("button", { name: "Edit damage at 0:18" }));
     expect(screen.getByText("22.5%")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Edit character at 0:18" }));
     const character = screen.getByRole("combobox", { name: "character at 0:18" });
@@ -59,13 +60,13 @@ describe("AnalysisWorkspace", () => {
     const time2 = screen.getByRole("textbox", { name: "timestamp at 0:18" });
     await user.clear(time2); await user.type(time2, "00:20{Enter}");
     expect(screen.getByRole("button", { name: "Edit timestamp at 0:20" })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
     expect(screen.getByRole("button", { name: "Edit timestamp at 0:18" })).toBeInTheDocument();
   });
 
   it("opens the manual event dialog with Ctrl+E and saves with Ctrl+Enter", async () => {
     render(<AnalysisWorkspace onBack={() => undefined} />);
-    fireEvent.keyDown(window, { key: "e", ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: "e", ctrlKey: true });
     const note = await screen.findByRole("textbox", { name: "Event note" });
     fireEvent.change(note, { target: { value: "Shortcut saved" } });
     fireEvent.keyDown(note, { key: "Enter", ctrlKey: true });

@@ -94,6 +94,8 @@ export const MANUAL_EVENT_TYPES: AnalysisEventType[] = [
   "Custom Event",
 ];
 
+export const ALL_EVENT_TYPES: AnalysisEventType[] = ["Hit Dealt", "Hit Received", ...MANUAL_EVENT_TYPES];
+
 export const STARTER_TAGS = [
   "Landing",
   "Juggling",

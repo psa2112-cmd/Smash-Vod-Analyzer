@@ -15,3 +15,4 @@
 - Keep analysis resizing in nested vertical/horizontal panels inside a fixed-height, page-scrollable workspace; this lets the video retain its aspect ratio while the table and notes remain independently resizable.
 - Drive analysis-table headers and cells from shared typed column definitions; this keeps column order, width, visibility, and persistence synchronized.
 - Route all project file I/O through `src/features/analysis/storageAdapter.ts`; it swaps native file pickers for a local workspace store in preview.
+- Keep inline-edit parsing and tag-grid arrow navigation as pure helpers in `src/features/analysis/inlineEditing.ts`; this keeps them unit-testable apart from the UI.

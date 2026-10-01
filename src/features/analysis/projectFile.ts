@@ -66,7 +66,6 @@ function isAnalysisEvent(value: unknown): value is AnalysisEvent {
     isNullableString(value["character"]) &&
     typeof value["timestamp"] === "number" && Number.isFinite(value["timestamp"]) &&
     isNullableNumber(value["damage"]) &&
-    isNullableString(value["direction"]) &&
     Array.isArray(value["tags"]) && value["tags"].every((tag) => typeof tag === "string") &&
     typeof value["note"] === "string" &&
     isNullableNumber(value["secondsSincePrevious"]);

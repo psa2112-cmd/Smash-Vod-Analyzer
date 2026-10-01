@@ -587,7 +587,6 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
       character: null,
       timestamp: Math.floor(currentTime),
       damage: null,
-      direction: null,
       tags: manualTags,
       note: manualNote.trim(),
       secondsSincePrevious: previousTimestamp === undefined ? null : Math.max(0, Math.floor(currentTime - previousTimestamp)),
@@ -1148,7 +1147,6 @@ function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBegi
       case "character": return <span className="text-muted-foreground">{event.character ?? "—"}</span>;
       case "timestamp": return <Button variant="ghost" size="sm" className="h-7 px-2 font-mono text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play />{formatTimestamp(event.timestamp)}</Button>;
       case "damage": return <span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>;
-      case "direction": return <span className="text-muted-foreground">{event.direction ?? "—"}</span>;
       case "tags": return <InlineTags tags={event.tags} onChange={(tags) => onUpdate({ tags })} />;
       case "note": return <input aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true" onFocus={onBeginTextEdit} onBlur={onCommitTextEdit} onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value }, "text")} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
       case "secondsSincePrevious": return <span className="font-mono text-muted-foreground">{event.secondsSincePrevious === null ? "—" : `${event.secondsSincePrevious.toFixed(1)}s`}</span>;

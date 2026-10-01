@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useRef } from "react";
+import { createFileRoute, useBlocker, useNavigate } from "@tanstack/react-router";
 import { AnalysisWorkspace } from "@/features/analysis/AnalysisWorkspace";
 
 export const Route = createFileRoute("/analyze")({
@@ -12,5 +13,22 @@ export const Route = createFileRoute("/analyze")({
       { name: "twitter:card", content: "summary" },
     ],
   }),
-  component: AnalysisWorkspace,
+  component: AnalyzePage,
 });
+
+function AnalyzePage() {
+  const navigate = useNavigate();
+  const unsavedRef = useRef(false);
+  const blocker = useBlocker({ shouldBlockFn: () => unsavedRef.current, enableBeforeUnload: false, withResolver: true });
+  const blockedNavigation = useMemo(
+    () => (blocker.status === "blocked" ? { proceed: blocker.proceed, cancel: blocker.reset } : null),
+    [blocker.status, blocker.proceed, blocker.reset],
+  );
+  return (
+    <AnalysisWorkspace
+      onBack={() => void navigate({ to: "/" })}
+      onUnsavedChange={(value) => { unsavedRef.current = value; }}
+      blockedNavigation={blockedNavigation}
+    />
+  );
+}

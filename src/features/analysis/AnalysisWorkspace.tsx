@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Check,
   Columns2,
   Eye,
   EyeOff,
+  FilePlus,
   Filter,
+  FolderOpen,
   GripVertical,
+  History,
   ListFilter,
   Maximize2,
   Minimize2,
@@ -15,18 +19,19 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Save,
   Search,
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  VideoOff,
   Volume2,
   X,
 } from "lucide-react";
-import { Link } from "@tanstack/react-router";
 import gameplayImage from "@/assets/analysis-gameplay.jpg";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -66,6 +71,42 @@ import {
   type TableColumnId,
   type TablePreferences,
 } from "./analysisData";
+import {
+  PROJECT_FILE_EXTENSION,
+  addRecentProject,
+  createProjectFile,
+  loadRecentProjects,
+  redownloadVideo,
+  saveRecentProjects,
+  type ProjectReplayInfo,
+  type RecentProject,
+  type VodProjectFile,
+} from "./projectFile";
+import {
+  AUTOSAVE_INTERVAL_MS,
+  NOTIFICATION_DURATION_MS,
+  SAMPLE_VIDEO_PATH,
+  hasNativeOpenPicker,
+  isVideoAvailable,
+  openProjectText,
+  openProjectWithPicker,
+  openStoredProject,
+  saveProject,
+  useCloseInterceptor,
+  type OpenProjectResult,
+  type ProjectHandle,
+} from "./storageAdapter";
+import {
+  EMPTY_UNDO_HISTORY,
+  createSnapshot,
+  pushUndoState,
+  redo,
+  snapshotsEqual,
+  undo,
+  type UndoHistory,
+  type WorkspaceSnapshot,
+} from "./undoRedo";
+import { TEXT_COMMIT_PAUSE_MS, isWordBoundary } from "./textUndoChunking";
 
 const VIDEO_DURATION = 224;
 const NOTES_KEY = "smash-replay-match-notes";
@@ -129,7 +170,18 @@ function saveTablePreferences(preferences: TablePreferences) {
 const FRAME_SECONDS = 1 / 60;
 const VERTICAL_HANDLE_CLASS = "group h-2 w-full cursor-row-resize bg-border/40 transition-colors hover:bg-primary/50 data-[separator=active]:bg-primary/70 focus-visible:bg-primary/60 after:hidden";
 
-export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
+const DEFAULT_REPLAY: ProjectReplayInfo = { videoPath: SAMPLE_VIDEO_PATH, title: "Mario vs. Pikachu · Battlefield" };
+
+export interface BlockedNavigation { proceed: () => void; cancel: () => void }
+interface PendingAction { proceed: () => void; cancel?: () => void }
+
+export interface AnalysisWorkspaceProps {
+  onBack?: () => void;
+  onUnsavedChange?: (unsavedChangesPresent: boolean) => void;
+  blockedNavigation?: BlockedNavigation | null;
+}
+
+export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation = null }: AnalysisWorkspaceProps) {
   const [events, setEvents] = useState(INITIAL_ANALYSIS_EVENTS);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
   const [tablePreferences, setTablePreferences] = useState(DEFAULT_TABLE_PREFERENCES);
@@ -145,12 +197,197 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
   const [manualEventType, setManualEventType] = useState<AnalysisEventType>("Neutral Win");
   const [manualNote, setManualNote] = useState("");
   const [manualTags, setManualTags] = useState<string[]>([]);
+  const [replay, setReplay] = useState<ProjectReplayInfo>(DEFAULT_REPLAY);
+  const [projectHandle, setProjectHandle] = useState<ProjectHandle | null>(null);
+  const [unsavedChangesPresent, setUnsavedChangesState] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [isVideoMissing, setIsVideoMissing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const unsavedRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Histories live in refs so a pending text chunk can be committed and undone in one keystroke.
+  const historyRef = useRef<UndoHistory>(EMPTY_UNDO_HISTORY);
+  const notesHistoryRef = useRef<UndoHistory<string>>(EMPTY_UNDO_HISTORY);
+  const notesBaselineRef = useRef<string | null>(null);
+  const notesCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const matchNotesRef = useRef<HTMLTextAreaElement | null>(null);
+  const dataRef = useRef<WorkspaceSnapshot>(createSnapshot(events, notes));
+  dataRef.current = { events, notes };
+  const savedSnapshotRef = useRef<WorkspaceSnapshot>(createSnapshot(events, notes));
+  const textEditBaselineRef = useRef<WorkspaceSnapshot | null>(null);
+
+  const setUnsavedChangesPresent = (value: boolean) => {
+    unsavedRef.current = value;
+    setUnsavedChangesState(value);
+    onUnsavedChange?.(value);
+  };
+
+  /** Records the state that existed before an undoable change to analysis data or notes. */
+  const recordUndoState = (previous?: WorkspaceSnapshot) => {
+    const snapshot = previous ?? createSnapshot(dataRef.current.events, dataRef.current.notes);
+    historyRef.current = pushUndoState(historyRef.current, snapshot);
+  };
+
+  const markSavedPoint = () => {
+    savedSnapshotRef.current = createSnapshot(dataRef.current.events, dataRef.current.notes);
+    setUnsavedChangesPresent(false);
+  };
 
   useEffect(() => {
     setLayout(readStoredLayout());
     setTablePreferences(readStoredTablePreferences());
-    setNotes(window.localStorage.getItem(NOTES_KEY) ?? "");
+    const storedNotes = window.localStorage.getItem(NOTES_KEY) ?? "";
+    setNotes(storedNotes);
+    savedSnapshotRef.current = createSnapshot(INITIAL_ANALYSIS_EVENTS, storedNotes);
+    setRecentProjects(loadRecentProjects());
   }, []);
+
+  // The Unsaved Changes indicator always reflects a comparison with the last saved version,
+  // so undo and redo move it back and forth automatically.
+  useEffect(() => {
+    const value = !snapshotsEqual({ events, notes }, savedSnapshotRef.current);
+    if (value !== unsavedRef.current) setUnsavedChangesPresent(value);
+  }, [events, notes]);
+
+  useEffect(() => {
+    if (!notification) return;
+    const timer = window.setTimeout(() => setNotification(null), NOTIFICATION_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [notification]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    void (async () => {
+      const isAvailable = await isVideoAvailable(replay.videoPath);
+      const isRecovered = isAvailable || (replay.originalUrl ? await redownloadVideo(replay.originalUrl) : false);
+      if (!isCancelled) setIsVideoMissing(!isRecovered);
+    })();
+    return () => { isCancelled = true; };
+  }, [replay]);
+
+  const rememberRecentProject = (handle: ProjectHandle) => {
+    const next = addRecentProject(loadRecentProjects(), { ...handle, lastOpenedDate: new Date().toISOString() });
+    saveRecentProjects(next);
+    setRecentProjects(next);
+  };
+
+  const buildSnapshot = () => createProjectFile({
+    replay,
+    events,
+    sorts: tablePreferences.sorts,
+    filters,
+    columnPreferences: tablePreferences,
+    notes,
+    session: { currentTimestamp: currentTime, selectedRowId: selectedEventId },
+  });
+
+  const saveWorkspace = async (kind: "manual" | "auto"): Promise<boolean> => {
+    setIsSaving(true);
+    try {
+      const handle = await saveProject(buildSnapshot(), projectHandle);
+      if (!handle) return false;
+      setProjectHandle(handle);
+      rememberRecentProject(handle);
+      markSavedPoint();
+      setProjectError(null);
+      setNotification(kind === "auto" ? "Automatically Saved" : "Saved Successfully");
+      return true;
+    } catch (error) {
+      console.error("[AnalysisWorkspace] save failed", error);
+      setProjectError("The project could not be saved. Check that the file is still available and try again.");
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const autosaveRef = useRef<() => void>(() => undefined);
+  autosaveRef.current = () => {
+    if (projectHandle && unsavedRef.current) void saveWorkspace("auto");
+  };
+  useEffect(() => {
+    const timer = window.setInterval(() => autosaveRef.current(), AUTOSAVE_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const applyProject = (project: VodProjectFile, handle: ProjectHandle) => {
+    console.info("[AnalysisWorkspace] project loaded", { filePath: handle.filePath, events: project.table.events.length });
+    setEvents(project.table.events);
+    setFilters(project.table.filters);
+    setTablePreferences({ ...project.table.columnPreferences, sorts: project.table.sorts });
+    setNotes(project.notes);
+    setCurrentTime(project.session.currentTimestamp);
+    setSelectedEventId(project.session.selectedRowId);
+    setIsPlaying(false);
+    setReplay(project.replay);
+    setProjectHandle(handle);
+    rememberRecentProject(handle);
+    // Opening a project is not undoable, so the history starts fresh at the loaded version.
+    historyRef.current = EMPTY_UNDO_HISTORY;
+    notesHistoryRef.current = EMPTY_UNDO_HISTORY;
+    notesBaselineRef.current = null;
+    textEditBaselineRef.current = null;
+    savedSnapshotRef.current = createSnapshot(project.table.events, project.notes);
+    setUnsavedChangesPresent(false);
+    setProjectError(null);
+  };
+
+  const handleOpenResult = (result: OpenProjectResult | null) => {
+    if (!result) return;
+    if (!result.ok) setProjectError(result.error);
+    else applyProject(result.project, result.handle);
+  };
+
+  const requestAction = (proceed: () => void, cancel?: () => void) => {
+    if (unsavedRef.current) setPendingAction({ proceed, ...(cancel ? { cancel } : {}) });
+    else proceed();
+  };
+
+  useEffect(() => {
+    if (blockedNavigation) setPendingAction({ proceed: blockedNavigation.proceed, cancel: blockedNavigation.cancel });
+  }, [blockedNavigation]);
+
+  useCloseInterceptor(unsavedChangesPresent, () => requestAction(() => window.desktopBridge?.confirmClose?.()));
+
+  const confirmSave = async () => {
+    const action = pendingAction;
+    if (!action) return;
+    if (await saveWorkspace("manual")) {
+      setPendingAction(null);
+      action.proceed();
+    }
+  };
+  const confirmDiscard = () => {
+    const action = pendingAction;
+    setPendingAction(null);
+    setUnsavedChangesPresent(false);
+    action?.proceed();
+  };
+  const confirmCancel = () => {
+    pendingAction?.cancel?.();
+    setPendingAction(null);
+  };
+
+  const analyzeNewReplay = () => requestAction(() => (onBack ? onBack() : window.location.assign("/")));
+  const openProject = () => requestAction(() => {
+    if (hasNativeOpenPicker()) void openProjectWithPicker().then(handleOpenResult);
+    else fileInputRef.current?.click();
+  });
+  const openRecentProject = (project: RecentProject) => requestAction(() => handleOpenResult(openStoredProject(project.filePath, project.id)));
+  const onProjectFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      handleOpenResult(openProjectText(await file.text(), file.name));
+    } catch (error) {
+      console.error("[AnalysisWorkspace] reading project file failed", error);
+      setProjectError("The project file could not be read. Try choosing it again.");
+    }
+  };
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -166,10 +403,55 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
     return () => window.clearInterval(timer);
   }, [isPlaying, playbackRate]);
 
+  const applySnapshot = (snapshot: WorkspaceSnapshot) => {
+    // Match notes are excluded from global history; only table data is restored.
+    dataRef.current = { events: snapshot.events, notes: dataRef.current.notes };
+    setEvents(snapshot.events);
+  };
+
+  const performUndo = () => {
+    commitTextEdit();
+    const result = undo(historyRef.current, createSnapshot(dataRef.current.events, dataRef.current.notes));
+    if (!result) return;
+    textEditBaselineRef.current = null;
+    historyRef.current = result.history;
+    applySnapshot(result.snapshot);
+  };
+
+  const performRedo = () => {
+    commitTextEdit();
+    const result = redo(historyRef.current, createSnapshot(dataRef.current.events, dataRef.current.notes));
+    if (!result) return;
+    textEditBaselineRef.current = null;
+    historyRef.current = result.history;
+    applySnapshot(result.snapshot);
+  };
+
   const hotkeyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
   hotkeyHandlerRef.current = (event: KeyboardEvent) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      void saveWorkspace("manual");
+      return;
+    }
     const target = event.target as HTMLElement | null;
     const isTyping = !!target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+    const isUndoKey = (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "z";
+    if (isUndoKey && target === matchNotesRef.current) {
+      // Inside match notes, only the separate match-notes history is affected.
+      event.preventDefault();
+      if (event.shiftKey) redoNotes();
+      else undoNotes();
+      return;
+    }
+    const isRowNote = !!target?.dataset["rowNote"];
+    // Other text fields (search, dialogs) keep the browser's own text undo.
+    if (isUndoKey && (!isTyping || isRowNote)) {
+      event.preventDefault();
+      if (event.shiftKey) performRedo();
+      else performUndo();
+      return;
+    }
     if (isTyping || isManualEventOpen || event.altKey || event.metaKey) return;
     const key = event.key.toLowerCase();
     if (event.ctrlKey) {
@@ -217,8 +499,75 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
     setIsPlaying(true);
   };
 
-  const updateEvent = (id: string, updates: Partial<AnalysisEvent>) => {
-    setEvents((current) => current.map((event) => (event.id === id ? { ...event, ...updates } : event)));
+  /** `mode: "text"` defers the undo entry to the blur commit so typing keeps one history state. */
+  const updateEvent = (id: string, updates: Partial<AnalysisEvent>, mode: "action" | "text" = "action") => {
+    if (mode === "action") recordUndoState();
+    else beginTextEdit();
+    const nextEvents = dataRef.current.events.map((event) => (event.id === id ? { ...event, ...updates } : event));
+    const previousNote = dataRef.current.events.find((event) => event.id === id)?.note ?? "";
+    dataRef.current = { ...dataRef.current, events: nextEvents };
+    setEvents(nextEvents);
+    if (mode !== "text") return;
+    if (textCommitTimerRef.current) clearTimeout(textCommitTimerRef.current);
+    if (updates.note !== undefined && isWordBoundary(previousNote, updates.note)) commitTextEdit();
+    else textCommitTimerRef.current = setTimeout(() => commitTextEdit(), TEXT_COMMIT_PAUSE_MS);
+  };
+
+  const textCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Match notes have their own history, separate from table data. */
+  const commitNotesEdit = () => {
+    if (notesCommitTimerRef.current) { clearTimeout(notesCommitTimerRef.current); notesCommitTimerRef.current = null; }
+    const baseline = notesBaselineRef.current;
+    notesBaselineRef.current = null;
+    if (baseline === null || baseline === dataRef.current.notes) return;
+    notesHistoryRef.current = pushUndoState(notesHistoryRef.current, baseline);
+  };
+
+  const changeNotes = (value: string) => {
+    const previous = dataRef.current.notes;
+    if (notesBaselineRef.current === null) notesBaselineRef.current = previous;
+    dataRef.current = { ...dataRef.current, notes: value };
+    setNotes(value);
+    if (notesCommitTimerRef.current) clearTimeout(notesCommitTimerRef.current);
+    if (isWordBoundary(previous, value)) commitNotesEdit();
+    else notesCommitTimerRef.current = setTimeout(commitNotesEdit, TEXT_COMMIT_PAUSE_MS);
+  };
+
+  const applyNotes = (value: string) => {
+    dataRef.current = { ...dataRef.current, notes: value };
+    setNotes(value);
+    if (typeof window !== "undefined") window.localStorage.setItem(NOTES_KEY, value);
+  };
+
+  const undoNotes = () => {
+    commitNotesEdit();
+    const result = undo(notesHistoryRef.current, dataRef.current.notes);
+    if (!result) return;
+    notesHistoryRef.current = result.history;
+    applyNotes(result.snapshot);
+  };
+
+  const redoNotes = () => {
+    commitNotesEdit();
+    const result = redo(notesHistoryRef.current, dataRef.current.notes);
+    if (!result) return;
+    notesHistoryRef.current = result.history;
+    applyNotes(result.snapshot);
+  };
+
+  const beginTextEdit = () => {
+    if (!textEditBaselineRef.current) {
+      textEditBaselineRef.current = createSnapshot(dataRef.current.events, dataRef.current.notes);
+    }
+  };
+
+  const commitTextEdit = () => {
+    if (textCommitTimerRef.current) { clearTimeout(textCommitTimerRef.current); textCommitTimerRef.current = null; }
+    const baseline = textEditBaselineRef.current;
+    textEditBaselineRef.current = null;
+    if (!baseline) return;
+    if (snapshotsEqual(baseline, { events: dataRef.current.events, notes: baseline.notes })) return;
+    recordUndoState(baseline);
   };
 
   const setAndSaveTablePreferences = (nextPreferences: TablePreferences) => {
@@ -243,6 +592,7 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
       note: manualNote.trim(),
       secondsSincePrevious: previousTimestamp === undefined ? null : Math.max(0, Math.floor(currentTime - previousTimestamp)),
     };
+    recordUndoState();
     setEvents((current) => [...current, event]);
     setFilters(DEFAULT_FILTERS);
     setSelectedEventId(event.id);
@@ -264,7 +614,17 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
         <WorkspaceHeader
           eventCount={events.length}
           layout={layout}
-          onBack={onBack}
+          title={replay.title}
+          unsavedChangesPresent={unsavedChangesPresent}
+          notification={notification}
+          fileMenu={{
+            recentProjects,
+            onSave: () => void saveWorkspace("manual"),
+            onAnalyzeNew: analyzeNewReplay,
+            onOpen: openProject,
+            onOpenRecent: openRecentProject,
+          }}
+          onBack={analyzeNewReplay}
           onAddEvent={() => setIsManualEventOpen(true)}
           onToggleNotes={() => togglePanel("notes")}
           onToggleFilters={() => togglePanel("filters")}
@@ -276,6 +636,12 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
              setAndSaveTablePreferences(DEFAULT_TABLE_PREFERENCES);
            }}
         />
+        {projectError && (
+          <div role="alert" className="flex items-center justify-between gap-3 border-b border-destructive/40 bg-destructive/15 px-4 py-2 text-sm text-destructive-foreground">
+            <span>{projectError}</span>
+            <Button variant="ghost" size="icon" aria-label="Dismiss error" onClick={() => setProjectError(null)}><X /></Button>
+          </div>
+        )}
 
         <div className="h-[calc(min(50vh,640px)/0.24)] shrink-0">
         <ResizablePanelGroup
@@ -291,6 +657,8 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
               isPlaying={isPlaying}
               playbackRate={playbackRate}
               volume={volume}
+              replay={replay}
+              isVideoMissing={isVideoMissing}
               onPlayToggle={() => setIsPlaying((playing) => !playing)}
               onSeek={setCurrentTime}
               onVolumeChange={setVolume}
@@ -318,8 +686,13 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
                 onSort={changeSort}
                 onJump={jumpToEvent}
                 onUpdate={updateEvent}
-                onDelete={(id) => setEvents((current) => current.filter((event) => event.id !== id))}
+                onDelete={(id) => {
+                  recordUndoState();
+                  setEvents((current) => current.filter((event) => event.id !== id));
+                }}
                 onAddEvent={() => setIsManualEventOpen(true)}
+                onBeginTextEdit={beginTextEdit}
+                onCommitTextEdit={commitTextEdit}
               />
               </ResizablePanel>
               <ResizableHandle aria-label="Resize event table and lower panels" className={VERTICAL_HANDLE_CLASS}><span aria-hidden className="h-1 w-12 rounded-full bg-muted-foreground/50 group-hover:bg-primary-foreground/70" /></ResizableHandle>
@@ -336,20 +709,20 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
                         {layout.isSwapped ? (
                           <FilterPanel filters={filters} events={events} onChange={setFilters} />
                         ) : (
-                          <NotesPanel notes={notes} onChange={setNotes} />
+                          <NotesPanel notes={notes} onChange={changeNotes} onCommit={commitNotesEdit} textareaRef={matchNotesRef} />
                         )}
                       </ResizablePanel>
                       <ResizableHandle withHandle />
                       <ResizablePanel id={layout.isSwapped ? "notes" : "filters"} minSize="30%">
                         {layout.isSwapped ? (
-                          <NotesPanel notes={notes} onChange={setNotes} />
+                          <NotesPanel notes={notes} onChange={changeNotes} onCommit={commitNotesEdit} textareaRef={matchNotesRef} />
                         ) : (
                           <FilterPanel filters={filters} events={events} onChange={setFilters} />
                         )}
                       </ResizablePanel>
                     </ResizablePanelGroup>
                   ) : layout.notesVisible ? (
-                    <NotesPanel notes={notes} onChange={setNotes} />
+                    <NotesPanel notes={notes} onChange={changeNotes} onCommit={commitNotesEdit} textareaRef={matchNotesRef} />
                   ) : (
                     <FilterPanel filters={filters} events={events} onChange={setFilters} />
                   )}
@@ -372,16 +745,82 @@ export function AnalysisWorkspace({ onBack }: { onBack?: () => void }) {
           onTagsChange={setManualTags}
           onSave={addManualEvent}
         />
+        <UnsavedChangesDialog
+          open={pendingAction !== null}
+          isSaving={isSaving}
+          onSave={() => void confirmSave()}
+          onDiscard={confirmDiscard}
+          onCancel={confirmCancel}
+        />
+        <input ref={fileInputRef} type="file" accept={`${PROJECT_FILE_EXTENSION},application/json`} className="hidden" aria-label="Open project file" data-testid="project-file-input" onChange={(event) => void onProjectFileChosen(event)} />
       </main>
     </TooltipProvider>
   );
 }
 
-function WorkspaceHeader({ eventCount, layout, controlsVisible, onBack, onAddEvent, onToggleNotes, onToggleFilters, onToggleControls, onSwap, onReset }: {
+interface FileMenuActions {
+  recentProjects: RecentProject[];
+  onSave: () => void;
+  onAnalyzeNew: () => void;
+  onOpen: () => void;
+  onOpenRecent: (project: RecentProject) => void;
+}
+
+function FileMenu({ recentProjects, onSave, onAnalyzeNew, onOpen, onOpenRecent }: FileMenuActions) {
+  const shortcut = typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "⌘S" : "Ctrl+S";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="File menu">File</Button></DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuItem onSelect={onSave}><Save /> Save<DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onAnalyzeNew}><FilePlus /> Analyze New Replay</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onOpen}><FolderOpen /> Open</DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger><History /> Recently Opened</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-64">
+            {recentProjects.length === 0 ? (
+              <DropdownMenuItem disabled>No recent projects</DropdownMenuItem>
+            ) : recentProjects.map((project) => (
+              <DropdownMenuItem key={project.id} onSelect={() => onOpenRecent(project)} className="flex-col items-start gap-0">
+                <span className="text-sm">{project.name}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">{project.filePath}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function UnsavedChangesDialog({ open, isSaving, onSave, onDiscard, onCancel }: { open: boolean; isSaving: boolean; onSave: () => void; onDiscard: () => void; onCancel: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Unsaved changes</DialogTitle>
+          <DialogDescription>You have unsaved changes. Save before continuing?</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button variant="outline" onClick={onDiscard}>Don't Save</Button>
+          <Button onClick={onSave} disabled={isSaving}>{isSaving ? "Saving…" : "Save"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedChangesPresent, notification, fileMenu, onBack, onAddEvent, onToggleNotes, onToggleFilters, onToggleControls, onSwap, onReset }: {
   eventCount: number;
   layout: WorkspaceLayout;
   controlsVisible: boolean;
-  onBack: (() => void) | undefined;
+  title: string;
+  unsavedChangesPresent: boolean;
+  notification: string | null;
+  fileMenu: FileMenuActions;
+  onBack: () => void;
   onAddEvent: () => void;
   onToggleNotes: () => void;
   onToggleFilters: () => void;
@@ -392,23 +831,24 @@ function WorkspaceHeader({ eventCount, layout, controlsVisible, onBack, onAddEve
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-4">
       <div className="flex min-w-0 items-center gap-4">
-        {onBack ? (
-          <Button variant="ghost" size="icon" aria-label="Back to import" onClick={onBack}><ArrowLeft /></Button>
-        ) : (
-          <Button asChild variant="ghost" size="icon" aria-label="Back to import">
-            <Link to="/"><ArrowLeft /></Link>
-          </Button>
-        )}
+        <Button variant="ghost" size="icon" aria-label="Back to import" onClick={onBack}><ArrowLeft /></Button>
+        <FileMenu {...fileMenu} />
         <div className="h-6 w-px bg-border" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="truncate font-display text-sm font-semibold">Mario vs. Pikachu · Battlefield</h1>
+            <h1 className="truncate font-display text-sm font-semibold">{title}</h1>
             <Badge variant="outline" className="border-success/30 bg-success/10 text-success">Analysis complete</Badge>
+            {unsavedChangesPresent && <span className="text-[11px] text-muted-foreground">• Unsaved changes</span>}
           </div>
-          <p className="font-mono text-[11px] text-muted-foreground">Grand Finals · Game 3 · {eventCount} review events</p>
+          <p className="font-mono text-[11px] text-muted-foreground">{eventCount} review events</p>
         </div>
       </div>
       <div className="flex items-center gap-1">
+        {notification && (
+          <div role="status" className="mr-2 flex items-center gap-1.5 rounded-md bg-notice px-3 py-1 text-xs font-semibold text-notice-foreground animate-in fade-in">
+            <Check className="size-3.5" aria-hidden /> {notification}
+          </div>
+        )}
         <Button size="sm" onClick={onAddEvent}><Plus /> Add event</Button>
         <div className="mx-2 h-6 w-px bg-border" />
         <IconTip label={controlsVisible ? "Hide video controls" : "Show video controls"} onClick={onToggleControls}>
@@ -438,12 +878,14 @@ function IconTip({ label, onClick, children }: { label: string; onClick: () => v
   );
 }
 
-function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, controlsVisible, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
+function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
   currentTime: number;
   isPlaying: boolean;
   playbackRate: number;
   volume: number;
   controlsVisible: boolean;
+  replay: ProjectReplayInfo;
+  isVideoMissing: boolean;
   onPlayToggle: () => void;
   onSeek: (value: number) => void;
   onVolumeChange: (value: number) => void;
@@ -467,9 +909,21 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
   };
   return (
     <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
-      <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />
-      <button type="button" onClick={onPlayToggle} aria-label="Toggle playback from video" className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
-      <div className="pointer-events-none absolute inset-0 bg-video-shade" />
+      {isVideoMissing ? (
+        <div role="status" className="flex aspect-video h-full max-w-full flex-col items-center justify-center gap-2 border border-dashed border-border bg-card/60 p-6 text-center">
+          <VideoOff className="size-8 text-muted-foreground" aria-hidden />
+          <p className="font-display text-lg font-semibold">No Video Found</p>
+          <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Missing file: {replay.videoPath || "not set"}</p>
+          {replay.originalUrl && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Original URL: {replay.originalUrl}</p>}
+          <p className="text-xs text-muted-foreground">Events, tags, filters, and notes are still available for review.</p>
+        </div>
+      ) : (
+        <>
+          <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />
+          <button type="button" onClick={onPlayToggle} aria-label="Toggle playback from video" className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
+          <div className="pointer-events-none absolute inset-0 bg-video-shade" />
+        </>
+      )}
       <div className="absolute left-4 top-4 flex items-center gap-2">
         <Badge className="bg-background/85 text-foreground shadow-none">GAME 3</Badge>
         <Badge variant="outline" className="border-primary/40 bg-background/70 text-primary">Battlefield</Badge>
@@ -500,7 +954,7 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
   );
 }
 
-function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePreferences, onTablePreferencesChange, onFiltersChange, onSort, onJump, onUpdate, onDelete, onAddEvent }: {
+function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePreferences, onTablePreferencesChange, onFiltersChange, onSort, onJump, onUpdate, onDelete, onAddEvent, onBeginTextEdit, onCommitTextEdit }: {
   events: AnalysisEvent[];
   totalCount: number;
   selectedEventId: string | null;
@@ -510,8 +964,10 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
   onFiltersChange: (filters: EventFilters) => void;
   onSort: (key: SortKey, additive: boolean) => void;
   onJump: (event: AnalysisEvent) => void;
-  onUpdate: (id: string, updates: Partial<AnalysisEvent>) => void;
+  onUpdate: (id: string, updates: Partial<AnalysisEvent>, mode?: "action" | "text") => void;
   onDelete: (id: string) => void;
+  onBeginTextEdit: () => void;
+  onCommitTextEdit: () => void;
   onAddEvent: () => void;
 }) {
   const [draggedColumnId, setDraggedColumnId] = useState<TableColumnId | null>(null);
@@ -600,7 +1056,7 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
           </thead>
           <tbody>
             {events.map((event) => (
-               <EventRow key={event.id} event={event} columns={visibleColumns} selected={selectedEventId === event.id} onJump={() => onJump(event)} onUpdate={(updates) => onUpdate(event.id, updates)} onDelete={() => onDelete(event.id)} />
+               <EventRow key={event.id} event={event} columns={visibleColumns} selected={selectedEventId === event.id} onJump={() => onJump(event)} onUpdate={(updates, mode) => onUpdate(event.id, updates, mode)} onDelete={() => onDelete(event.id)} onBeginTextEdit={onBeginTextEdit} onCommitTextEdit={onCommitTextEdit} />
             ))}
           </tbody>
         </table>
@@ -685,7 +1141,7 @@ function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, tag
   );
 }
 
-function EventRow({ event, columns, selected, onJump, onUpdate, onDelete }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>) => void; onDelete: () => void }) {
+function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBeginTextEdit, onCommitTextEdit }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>, mode?: "action" | "text") => void; onDelete: () => void; onBeginTextEdit: () => void; onCommitTextEdit: () => void }) {
   const cellForColumn = (columnId: TableColumnId) => {
     switch (columnId) {
       case "eventType": return <span className={cn("font-medium", event.eventType === "Hit Received" && "text-destructive", event.eventType === "Hit Dealt" && "text-success")}>{event.eventType}</span>;
@@ -694,7 +1150,7 @@ function EventRow({ event, columns, selected, onJump, onUpdate, onDelete }: { ev
       case "damage": return <span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>;
       case "direction": return <span className="text-muted-foreground">{event.direction ?? "—"}</span>;
       case "tags": return <InlineTags tags={event.tags} onChange={(tags) => onUpdate({ tags })} />;
-      case "note": return <input aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value })} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
+      case "note": return <input aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true" onFocus={onBeginTextEdit} onBlur={onCommitTextEdit} onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value }, "text")} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
       case "secondsSincePrevious": return <span className="font-mono text-muted-foreground">{event.secondsSincePrevious === null ? "—" : `${event.secondsSincePrevious.toFixed(1)}s`}</span>;
     }
   };
@@ -731,7 +1187,7 @@ function InlineTags({ tags, onChange }: { tags: string[]; onChange: (tags: strin
   );
 }
 
-function NotesPanel({ notes, onChange }: { notes: string; onChange: (value: string) => void }) {
+function NotesPanel({ notes, onChange, onCommit, textareaRef }: { notes: string; onChange: (value: string) => void; onCommit: () => void; textareaRef: Ref<HTMLTextAreaElement> }) {
   const saveNotes = (value: string) => {
     onChange(value);
     if (typeof window !== "undefined") window.localStorage.setItem(NOTES_KEY, value);
@@ -742,7 +1198,7 @@ function NotesPanel({ notes, onChange }: { notes: string; onChange: (value: stri
         <div><h2 className="font-display text-sm font-semibold">Match notes</h2><p className="text-[11px] text-muted-foreground">High-level patterns across the set</p></div>
         <span className="text-[10px] text-success">Saved locally</span>
       </div>
-      <Textarea aria-label="Match notes" value={notes} onChange={(event) => saveNotes(event.target.value)} placeholder="What patterns are showing up?&#10;&#10;• Panicking in the corner&#10;• Missing kill confirms&#10;• Winning neutral, losing advantage" className="min-h-0 flex-1 resize-none border-border bg-background/45 text-xs leading-5" />
+      <Textarea ref={textareaRef} aria-label="Match notes" value={notes} onBlur={onCommit} onChange={(event) => saveNotes(event.target.value)} placeholder="What patterns are showing up?&#10;&#10;• Panicking in the corner&#10;• Missing kill confirms&#10;• Winning neutral, losing advantage" className="min-h-0 flex-1 resize-none border-border bg-background/45 text-xs leading-5" />
     </section>
   );
 }

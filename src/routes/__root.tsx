@@ -6,6 +6,7 @@ import {
   useRouter,
   HeadContent,
   Scripts,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 
@@ -34,7 +35,7 @@ function NotFoundComponent() {
   );
 }
 
-function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
   useEffect(() => {
@@ -114,11 +115,47 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+function SiteHeader() {
+  const linkClass =
+    "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+  return (
+    <header className="sticky top-0 z-50 border-b border-border bg-background/85 backdrop-blur">
+      <nav
+        aria-label="Main"
+        className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4"
+      >
+        <Link to="/" className="font-display text-sm font-bold uppercase tracking-[0.2em]">
+          Replay <span className="text-primary">Analyzer</span>
+        </Link>
+        <div className="flex items-center gap-1">
+          <Link
+            to="/"
+            activeOptions={{ exact: true }}
+            activeProps={{ className: "bg-secondary text-foreground" }}
+            className={linkClass}
+          >
+            Home
+          </Link>
+          <Link
+            to="/analyze"
+            activeProps={{ className: "bg-secondary text-foreground" }}
+            className={linkClass}
+          >
+            Workspace
+          </Link>
+        </div>
+      </nav>
+    </header>
+  );
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
+      <SiteHeader />
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
     </QueryClientProvider>

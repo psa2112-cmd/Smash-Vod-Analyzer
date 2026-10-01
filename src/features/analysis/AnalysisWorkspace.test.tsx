@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AnalysisWorkspace } from "./AnalysisWorkspace";
+import { DEFAULT_FILTERS, DEFAULT_TABLE_PREFERENCES, INITIAL_ANALYSIS_EVENTS } from "./analysisData";
+import { createProjectFile, serializeProjectFile } from "./projectFile";
 
 describe("AnalysisWorkspace", () => {
   beforeEach(() => window.localStorage.clear());
@@ -130,5 +132,171 @@ describe("AnalysisWorkspace", () => {
     expect(screen.queryByRole("button", { name: /play replay/i })).not.toBeInTheDocument();
     await user.keyboard("{Control>},{/Control}");
     expect(screen.queryByLabelText("Match notes", { exact: true })).not.toBeInTheDocument();
+  });
+});
+
+describe("AnalysisWorkspace save & load", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  const openFileMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+    screen.getByRole("button", { name: /file menu/i }).focus();
+    await user.keyboard("{ArrowDown}");
+  };
+
+  it("saves with Ctrl+S and shows the notification", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    fireEvent.change(screen.getByLabelText("Match notes", { exact: true }), { target: { value: "Changed notes" } });
+    expect(screen.getByText(/unsaved changes/i)).toBeInTheDocument();
+    await user.keyboard("{Control>}s{/Control}");
+    expect(await screen.findByText("Saved Successfully")).toBeInTheDocument();
+    expect(screen.queryByText(/• unsaved changes/i)).not.toBeInTheDocument();
+  });
+
+  it("saves from File → Save", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await openFileMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: /save/i }));
+    expect(await screen.findByText("Saved Successfully")).toBeInTheDocument();
+  });
+
+  it("does not mark unsaved on playback or seeking", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: /play replay/i }));
+    await user.click(screen.getByRole("button", { name: /jump to 0:18/i }));
+    expect(screen.queryByText(/unsaved changes/i)).not.toBeInTheDocument();
+  });
+
+  it("asks before Analyze New Replay and Open when changes are unsaved", async () => {
+    const user = userEvent.setup();
+    let wentBack = 0;
+    render(<AnalysisWorkspace onBack={() => { wentBack += 1; }} />);
+    fireEvent.change(screen.getByLabelText("Match notes", { exact: true }), { target: { value: "Changed notes" } });
+    await openFileMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: /analyze new replay/i }));
+    expect(screen.getByText("You have unsaved changes. Save before continuing?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(wentBack).toBe(0);
+    await openFileMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: /^open$/i }));
+    expect(screen.getByRole("button", { name: "Don't Save" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: /back to import/i }));
+    await user.click(screen.getByRole("button", { name: "Don't Save" }));
+    expect(wentBack).toBe(1);
+  });
+
+  it("asks before closing through the desktop bridge", async () => {
+    let closeHandler: (() => boolean) | null = null;
+    window.desktopBridge = { onCloseRequested: (handler) => { closeHandler = handler; } };
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    fireEvent.change(screen.getByLabelText("Match notes", { exact: true }), { target: { value: "Changed notes" } });
+    let allowed = true;
+    act(() => { allowed = closeHandler!(); });
+    expect(allowed).toBe(false);
+    expect(screen.getByText("You have unsaved changes. Save before continuing?")).toBeInTheDocument();
+    delete window.desktopBridge;
+  });
+
+  it("shows No Video Found after opening a project with a missing video", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    const project = createProjectFile({
+      replay: { videoPath: "C:/vods/missing.mp4", title: "Loaded Set", originalUrl: "https://youtu.be/abc" },
+      events: INITIAL_ANALYSIS_EVENTS, sorts: [], filters: DEFAULT_FILTERS, columnPreferences: DEFAULT_TABLE_PREFERENCES,
+      notes: "Loaded notes", session: { currentTimestamp: 5, selectedRowId: null },
+    });
+    const file = new File([serializeProjectFile(project)], "loaded.vodproject", { type: "application/json" });
+    await user.upload(screen.getByTestId("project-file-input"), file);
+    expect(await screen.findByText("No Video Found")).toBeInTheDocument();
+    expect(screen.getByText(/C:\/vods\/missing.mp4/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Loaded Set" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Loaded notes")).toBeInTheDocument();
+  });
+
+  it("shows an error for a malformed project file", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await user.upload(screen.getByTestId("project-file-input"), new File(["{bad"], "bad.vodproject"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not be read/i);
+  });
+});
+
+describe("AnalysisWorkspace undo/redo", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it("undoes and redoes a row note edit committed on blur and clears unsaved", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    const input = screen.getAllByRole("textbox", { name: /edit note at/i })[0] as HTMLInputElement;
+    const original = input.value;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: `${original} extra` } });
+    expect(screen.getByText(/unsaved changes/i)).toBeInTheDocument();
+    fireEvent.blur(input);
+    await user.keyboard("{Control>}z{/Control}");
+    expect(screen.getAllByRole("textbox", { name: /edit note at/i })[0]).toHaveValue(original);
+    expect(screen.queryByText(/unsaved changes/i)).not.toBeInTheDocument();
+    await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+    expect(screen.getAllByRole("textbox", { name: /edit note at/i })[0]).toHaveValue(`${original} extra`);
+  });
+
+  it("never changes match notes when undoing outside the match notes box", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    const input = screen.getAllByRole("textbox", { name: /edit note at/i })[0] as HTMLInputElement;
+    const original = input.value;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: `${original}!` } });
+    fireEvent.blur(input);
+    const matchNotes = screen.getByLabelText("Match notes", { exact: true });
+    fireEvent.focus(matchNotes);
+    fireEvent.change(matchNotes, { target: { value: "Keep me" } });
+    fireEvent.blur(matchNotes);
+    await user.keyboard("{Control>}z{/Control}");
+    expect(matchNotes).toHaveValue("Keep me");
+    expect(screen.getAllByRole("textbox", { name: /edit note at/i })[0]).toHaveValue(original);
+  });
+
+  it("undoes match notes word by word only while focused in the box", () => {
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    const matchNotes = screen.getByLabelText("Match notes", { exact: true });
+    matchNotes.focus();
+    let value = "";
+    for (const character of "Stop jumping") {
+      value += character;
+      fireEvent.change(matchNotes, { target: { value } });
+    }
+    fireEvent.keyDown(matchNotes, { key: "z", ctrlKey: true });
+    expect(matchNotes).toHaveValue("Stop ");
+    fireEvent.keyDown(matchNotes, { key: "z", ctrlKey: true });
+    expect(matchNotes).toHaveValue("");
+    fireEvent.keyDown(matchNotes, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(matchNotes).toHaveValue("Stop ");
+    expect(screen.queryByText(/unsaved changes/i)).toBeInTheDocument();
+    fireEvent.keyDown(matchNotes, { key: "z", ctrlKey: true });
+    expect(screen.queryByText(/unsaved changes/i)).not.toBeInTheDocument();
+  });
+
+  it("commits a row note chunk after a 330ms pause and undoes it from inside the input", () => {
+    vi.useFakeTimers();
+    try {
+      render(<AnalysisWorkspace onBack={() => undefined} />);
+      const input = screen.getAllByRole("textbox", { name: /edit note at/i })[0] as HTMLInputElement;
+      const original = input.value;
+      input.focus();
+      fireEvent.change(input, { target: { value: `${original}a` } });
+      act(() => { vi.advanceTimersByTime(330); });
+      fireEvent.change(input, { target: { value: `${original}ab` } });
+      fireEvent.keyDown(input, { key: "z", ctrlKey: true });
+      expect(input).toHaveValue(`${original}a`);
+      fireEvent.keyDown(input, { key: "z", ctrlKey: true });
+      expect(input).toHaveValue(original);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

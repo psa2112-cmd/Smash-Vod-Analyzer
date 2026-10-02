@@ -86,3 +86,23 @@ describe("redownloadVideo stub", () => {
     await expect(redownloadVideo("https://youtu.be/abc")).resolves.toBe(false);
   });
 });
+
+describe("clip range", () => {
+  it("round-trips the clip range saved with the replay", () => {
+    const base = sampleProject();
+    const clipRange = { isFullVideo: false, startTimestamp: "05:00", endTimestamp: "10:00", startSeconds: 300, endSeconds: 600 };
+    const project = { ...base, replay: { ...base.replay, clipRange } };
+    const result = parseProjectFile(serializeProjectFile(project));
+    expect(result.ok && result.project.replay.clipRange).toEqual(clipRange);
+  });
+
+  it("rejects a damaged clip range", () => {
+    const base = sampleProject();
+    const damaged = { ...base, replay: { ...base.replay, clipRange: { isFullVideo: "no" } } };
+    expect(parseProjectFile(JSON.stringify(damaged)).ok).toBe(false);
+  });
+
+  it("passes the clip range to the redownload stub", async () => {
+    await expect(redownloadVideo("https://youtu.be/abc", { isFullVideo: true })).resolves.toBe(false);
+  });
+});

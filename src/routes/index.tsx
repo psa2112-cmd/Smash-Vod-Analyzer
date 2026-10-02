@@ -1,6 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { toast } from "sonner";
 import { ReplayImportPanel, type ReplaySource } from "@/features/replay-import/ReplayImportPanel";
+import { downloadReplayVideo, setPendingReplay } from "@/features/analysis/storageAdapter";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -17,14 +19,27 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  const [lastSource, setLastSource] = useState<ReplaySource | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const navigate = useNavigate();
 
   const handleAnalyze = async (source: ReplaySource) => {
     console.info("[home] analyze requested", { kind: source.kind });
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    setLastSource(source);
-    await navigate({ to: "/analyze" });
+    try {
+      if (source.kind === "file") {
+        setPendingReplay({ videoPath: source.file.name, title: source.file.name });
+      } else {
+        setDownloadProgress(0);
+        const videoPath = await downloadReplayVideo(source.url, source.clipRange, setDownloadProgress);
+        const platformName = source.kind === "youtube" ? "YouTube" : "Twitch VOD";
+        setPendingReplay({ videoPath, title: `${platformName} replay`, originalUrl: source.url, clipRange: source.clipRange });
+      }
+      await navigate({ to: "/analyze" });
+    } catch (error) {
+      console.error("[home] import failed", error);
+      toast.error("The video couldn't be downloaded. Check the link and try again.");
+    } finally {
+      setDownloadProgress(null);
+    }
   };
 
   return (
@@ -41,13 +56,8 @@ function HomePage() {
           </p>
         </header>
         <section aria-label="Import replay" className="rounded-xl border border-border bg-card/80 p-6 shadow-panel backdrop-blur">
-          <ReplayImportPanel onAnalyze={handleAnalyze} />
+          <ReplayImportPanel onAnalyze={handleAnalyze} downloadProgress={downloadProgress} />
         </section>
-        {lastSource && (
-          <p role="status" className="mt-4 text-center text-sm text-muted-foreground">
-            Ready to analyze. The progress screen comes in the next step.
-          </p>
-        )}
       </div>
     </main>
   );

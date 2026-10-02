@@ -14,7 +14,7 @@ describe("ReplayImportPanel", () => {
   it("shows validation error for an unsupported link", async () => {
     render(<ReplayImportPanel onAnalyze={vi.fn()} />);
     typeLink("https://vimeo.com/1");
-    expect(await screen.findByRole("alert")).toHaveTextContent(/youtube or twitch/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/youtube video or twitch vod/i);
     expect(screen.getByRole("button", { name: /analyze replay/i })).toBeDisabled();
   });
 

@@ -90,6 +90,7 @@ import {
   SAMPLE_VIDEO_PATH,
   hasNativeOpenPicker,
   isVideoAvailable,
+  takePendingReplay,
   openProjectText,
   openProjectWithPicker,
   openStoredProject,

@@ -90,6 +90,7 @@ import {
   SAMPLE_VIDEO_PATH,
   hasNativeOpenPicker,
   isVideoAvailable,
+  takePendingReplay,
   openProjectText,
   openProjectWithPicker,
   openStoredProject,
@@ -274,10 +275,15 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   }, [notification]);
 
   useEffect(() => {
+    const pendingReplay = takePendingReplay();
+    if (pendingReplay) setReplay(pendingReplay);
+  }, []);
+
+  useEffect(() => {
     let isCancelled = false;
     void (async () => {
       const isAvailable = await isVideoAvailable(replay.videoPath);
-      const isRecovered = isAvailable || (replay.originalUrl ? await redownloadVideo(replay.originalUrl) : false);
+      const isRecovered = isAvailable || (replay.originalUrl ? await redownloadVideo(replay.originalUrl, replay.clipRange) : false);
       if (!isCancelled) setIsVideoMissing(!isRecovered);
     })();
     return () => { isCancelled = true; };

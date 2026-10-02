@@ -5,13 +5,15 @@ import {
   type SortRule,
   type TablePreferences,
 } from "./analysisData";
+import type { ClipRange } from "@/features/replay-import/replaySource";
 
 export const PROJECT_SCHEMA_VERSION = "1.0.0";
 export const PROJECT_FILE_EXTENSION = ".vodproject";
 export const RECENT_PROJECTS_KEY = "smash-replay-recent-projects";
 export const MAX_RECENT_PROJECTS = 5;
 
-export interface ProjectReplayInfo { videoPath: string; title: string; originalUrl?: string }
+export type ProjectClipRange = ClipRange;
+export interface ProjectReplayInfo { videoPath: string; title: string; originalUrl?: string; clipRange?: ProjectClipRange }
 export interface ProjectSessionState { currentTimestamp: number; selectedRowId: string | null }
 export interface ProjectTableState {
   events: AnalysisEvent[];
@@ -38,7 +40,7 @@ export interface RecentProject { id: string; name: string; filePath: string; las
 export function createProjectFile(input: CreateProjectInput): VodProjectFile {
   return {
     version: PROJECT_SCHEMA_VERSION,
-    replay: { ...input.replay },
+    replay: { ...input.replay, ...(input.replay.clipRange ? { clipRange: { ...input.replay.clipRange } } : {}) },
     table: {
       events: input.events.map((event) => ({ ...event, tags: [...event.tags] })),
       sorts: input.sorts.map((sort) => ({ ...sort })),
@@ -71,6 +73,12 @@ function isAnalysisEvent(value: unknown): value is AnalysisEvent {
     isNullableNumber(value["secondsSincePrevious"]);
 }
 
+function isClipRange(value: unknown): value is ProjectClipRange {
+  if (!isObject(value) || typeof value["isFullVideo"] !== "boolean") return false;
+  return ["startTimestamp", "endTimestamp"].every((key) => value[key] === undefined || typeof value[key] === "string") &&
+    ["startSeconds", "endSeconds"].every((key) => value[key] === undefined || (typeof value[key] === "number" && Number.isFinite(value[key])));
+}
+
 function isSortRule(value: unknown): value is SortRule {
   return isObject(value) && typeof value["key"] === "string" && (value["direction"] === "asc" || value["direction"] === "desc");
 }
@@ -101,7 +109,8 @@ export function parseProjectFile(text: string): ParseProjectResult {
   }
   const { replay, table, notes, session } = data;
   if (!isObject(replay) || typeof replay["videoPath"] !== "string" || typeof replay["title"] !== "string" ||
-    (replay["originalUrl"] !== undefined && typeof replay["originalUrl"] !== "string")) {
+    (replay["originalUrl"] !== undefined && typeof replay["originalUrl"] !== "string") ||
+    (replay["clipRange"] !== undefined && !isClipRange(replay["clipRange"]))) {
     return fail("The project is missing its replay information.");
   }
   if (!isObject(table) || !Array.isArray(table["events"]) || !Array.isArray(table["sorts"])) {
@@ -115,8 +124,9 @@ export function parseProjectFile(text: string): ParseProjectResult {
     return fail("The project's session information is damaged.");
   }
   const originalUrl = replay["originalUrl"] as string | undefined;
+  const clipRange = replay["clipRange"] as ProjectClipRange | undefined;
   const project = createProjectFile({
-    replay: { videoPath: replay["videoPath"], title: replay["title"], ...(originalUrl !== undefined ? { originalUrl } : {}) },
+    replay: { videoPath: replay["videoPath"], title: replay["title"], ...(originalUrl !== undefined ? { originalUrl } : {}), ...(clipRange ? { clipRange } : {}) },
     events: table["events"],
     sorts: table["sorts"],
     filters: table["filters"],
@@ -152,7 +162,7 @@ export function saveRecentProjects(list: RecentProject[]): void {
 /**
  * TO DO: create functionality for downloading videos.
  */
-export async function redownloadVideo(url: string): Promise<boolean> {
-  console.info("[projectFile] redownloadVideo stub called", { url });
+export async function redownloadVideo(url: string, clipRange?: ProjectClipRange): Promise<boolean> {
+  console.info("[projectFile] redownloadVideo stub called", { url, clipRange });
   return false;
 }

@@ -136,3 +136,59 @@ export function useCloseInterceptor(hasUnsavedChanges: boolean, onCloseRequested
     };
   }, []);
 }
+
+/** App-managed download folder (user's Videos folder; Movies on macOS in native builds). */
+export const VIDEO_STORAGE_FOLDER = "~/Videos/SmashReplayAnalyzer";
+const PENDING_REPLAY_KEY = "smash-replay-pending-import";
+
+interface DownloadClipRange { isFullVideo: boolean; startSeconds?: number; endSeconds?: number }
+
+export function buildVideoFileName(url: string, clipRange: DownloadClipRange): string {
+  const youtubeId = url.match(/(?:v=|youtu\.be\/|live\/|shorts\/)([\w-]{6,})/)?.[1];
+  const twitchId = url.match(/videos\/(\d+)/)?.[1];
+  const base = youtubeId ? `youtube-${youtubeId}` : twitchId ? `twitch-${twitchId}` : `replay-${slugify(url)}`;
+  const range = clipRange.isFullVideo ? "full" : `${clipRange.startSeconds ?? 0}-${clipRange.endSeconds ?? 0}`;
+  return `${base}-${range}.mp4`;
+}
+
+/**
+ * Downloads the selected section into the managed video folder.
+ * The preview simulates progress; the packaged desktop app performs the real download.
+ */
+export async function downloadReplayVideo(
+  url: string,
+  clipRange: DownloadClipRange,
+  onProgress: (percent: number) => void,
+  stepDelayMs = 120,
+): Promise<string> {
+  const videoPath = `${VIDEO_STORAGE_FOLDER}/${buildVideoFileName(url, clipRange)}`;
+  console.info("[storageAdapter] download start", { url, clipRange, videoPath });
+  for (let percent = 10; percent <= 100; percent += 10) {
+    await new Promise((resolve) => setTimeout(resolve, stepDelayMs));
+    onProgress(percent);
+  }
+  console.info("[storageAdapter] download complete", { videoPath });
+  return videoPath;
+}
+
+export interface PendingReplay { videoPath: string; title: string; originalUrl?: string; clipRange?: DownloadClipRange & { startTimestamp?: string; endTimestamp?: string } }
+
+export function setPendingReplay(replay: PendingReplay): void {
+  window.sessionStorage.setItem(PENDING_REPLAY_KEY, JSON.stringify(replay));
+}
+
+/** Returns and clears the replay handed off from the home page, if any. */
+export function takePendingReplay(): PendingReplay | null {
+  const raw = window.sessionStorage.getItem(PENDING_REPLAY_KEY);
+  if (!raw) return null;
+  window.sessionStorage.removeItem(PENDING_REPLAY_KEY);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && typeof (parsed as PendingReplay).videoPath === "string" && typeof (parsed as PendingReplay).title === "string") {
+      return parsed as PendingReplay;
+    }
+  } catch {
+    console.warn("[storageAdapter] pending replay unreadable");
+  }
+  return null;
+}

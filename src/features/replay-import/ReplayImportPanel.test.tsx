@@ -66,6 +66,7 @@ describe("ReplayImportPanel", () => {
 
   it("renders the full-video checkbox larger with a gray unchecked surface", () => {
     render(<ReplayImportPanel onAnalyze={vi.fn()} />);
+    typeLink("https://youtu.be/dQw4w9WgXcQ");
     const checkbox = screen.getByRole("checkbox", { name: /full video/i });
     const swatch = checkbox.nextElementSibling as HTMLElement;
     expect(swatch).toHaveClass("size-5", "bg-muted");

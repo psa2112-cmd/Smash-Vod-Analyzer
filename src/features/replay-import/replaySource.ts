@@ -51,30 +51,35 @@ export function detectLinkPlatform(raw: string): LinkPlatform | null {
   return null;
 }
 
-/** Live input mask: groups digits as mm:ss / hh:mm:ss, keeping colon-typed values intact. */
+/** Groups up to six digits in pairs, as in the provided video-download time input. */
 export function formatTimestampInput(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-  if (trimmed.includes(":")) {
-    return trimmed
-      .split(":")
-      .slice(0, 3)
-      .map((part, index) => part.replace(/\D/g, "").slice(0, index === 0 ? 3 : 2))
-      .join(":");
-  }
-  const digits = trimmed.replace(/\D/g, "").slice(0, 6);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, -2)}:${digits.slice(-2)}`;
-  return `${digits.slice(0, -4)}:${digits.slice(-4, -2)}:${digits.slice(-2)}`;
+  const digits = raw.replace(/\D/g, "").slice(0, 6);
+  return [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)]
+    .filter(Boolean)
+    .join(":");
 }
+
+export function digitsBefore(text: string, pos: number): number {
+  return text.slice(0, pos).replace(/\D/g, "").length;
+}
+
+export function caretForDigitCount(formatted: string, count: number): number {
+  if (count === 0) return 0;
+  let seen = 0;
+  for (let i = 0; i < formatted.length; i++) {
+    if (/\d/.test(formatted[i])) seen++;
+    if (seen === count) return i + 1;
+  }
+  return formatted.length;
+}
+
+export const DOWNLOAD_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
 /** Parses "mm:ss" or "hh:mm:ss" into seconds; null when malformed. */
 export function parseClipTimestamp(raw: string): number | null {
+  if (!DOWNLOAD_TIME_PATTERN.test(raw.trim())) return null;
   const parts = raw.trim().split(":");
-  if (parts.length < 2 || parts.length > 3) return null;
-  if (!parts.every((part, index) => (index === 0 ? /^\d{1,3}$/ : /^\d{2}$/).test(part))) return null;
   const numbers = parts.map(Number);
-  if (numbers.slice(1).some((value) => value > 59)) return null;
   return numbers.reduce((total, value) => total * 60 + value, 0);
 }
 

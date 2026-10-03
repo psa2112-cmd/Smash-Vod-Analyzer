@@ -1,9 +1,10 @@
 import { useId, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
-import { Upload, Link2, CheckCircle2, AlertCircle, Loader2, X, Film } from "lucide-react";
+import { Upload, Link2, Check, CheckCircle2, AlertCircle, Loader2, X, Film } from "lucide-react";
 import {
   ACCEPTED_VIDEO_TYPES,
   detectLinkPlatform,
   formatFileSize,
+  formatTimestampInput,
   validateClipRange,
   validateVideoFile,
   type ClipRange,
@@ -118,19 +119,39 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
                 type="checkbox"
                 checked={isFullVideo}
                 onChange={(e) => setIsFullVideo(e.target.checked)}
-                className="size-4 accent-primary"
+                className="peer sr-only"
               />
+              <span
+                aria-hidden
+                className="flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted text-primary-foreground transition-colors peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background [&>svg]:opacity-0 peer-checked:border-primary peer-checked:bg-primary peer-checked:[&>svg]:opacity-100"
+              >
+                <Check className="size-3.5" strokeWidth={3} aria-hidden />
+              </span>
               Full video
             </label>
             {!isFullVideo && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label htmlFor={ids.start} className="mb-1 block text-xs font-medium text-muted-foreground">Start timestamp</label>
-                  <input id={ids.start} placeholder="mm:ss or hh:mm:ss" value={startTime} onChange={(e) => setStartTime(e.target.value)} className={inputClass(Boolean(clipError))} />
+                  <input
+                    id={ids.start}
+                    inputMode="numeric"
+                    placeholder="mm:ss or hh:mm:ss"
+                    value={startTime}
+                    onChange={(e) => setStartTime(formatTimestampInput(e.target.value))}
+                    className={inputClass(Boolean(clipError))}
+                  />
                 </div>
                 <div>
                   <label htmlFor={ids.end} className="mb-1 block text-xs font-medium text-muted-foreground">End timestamp</label>
-                  <input id={ids.end} placeholder="mm:ss or hh:mm:ss" value={endTime} onChange={(e) => setEndTime(e.target.value)} className={inputClass(Boolean(clipError))} />
+                  <input
+                    id={ids.end}
+                    inputMode="numeric"
+                    placeholder="mm:ss or hh:mm:ss"
+                    value={endTime}
+                    onChange={(e) => setEndTime(formatTimestampInput(e.target.value))}
+                    className={inputClass(Boolean(clipError))}
+                  />
                 </div>
               </div>
             )}

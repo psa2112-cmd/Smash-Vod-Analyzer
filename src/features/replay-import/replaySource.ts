@@ -51,6 +51,23 @@ export function detectLinkPlatform(raw: string): LinkPlatform | null {
   return null;
 }
 
+/** Live input mask: groups digits as mm:ss / hh:mm:ss, keeping colon-typed values intact. */
+export function formatTimestampInput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes(":")) {
+    return trimmed
+      .split(":")
+      .slice(0, 3)
+      .map((part, index) => part.replace(/\D/g, "").slice(0, index === 0 ? 3 : 2))
+      .join(":");
+  }
+  const digits = trimmed.replace(/\D/g, "").slice(0, 6);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, -2)}:${digits.slice(-2)}`;
+  return `${digits.slice(0, -4)}:${digits.slice(-4, -2)}:${digits.slice(-2)}`;
+}
+
 /** Parses "mm:ss" or "hh:mm:ss" into seconds; null when malformed. */
 export function parseClipTimestamp(raw: string): number | null {
   const parts = raw.trim().split(":");

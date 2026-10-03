@@ -45,6 +45,34 @@ describe("ReplayImportPanel", () => {
     });
   });
 
+  it("auto-formats typed timestamps with a colon", () => {
+    render(<ReplayImportPanel onAnalyze={vi.fn()} />);
+    typeLink("https://twitch.tv/videos/12345");
+    const start = screen.getByLabelText(/start timestamp/i);
+    fireEvent.change(start, { target: { value: "1230" } });
+    expect(start).toHaveValue("12:30");
+    const end = screen.getByLabelText(/end timestamp/i);
+    fireEvent.change(end, { target: { value: "14800" } });
+    expect(end).toHaveValue("1:48:00");
+  });
+
+  it("keeps timestamps the user typed with colons intact", () => {
+    render(<ReplayImportPanel onAnalyze={vi.fn()} />);
+    typeLink("https://twitch.tv/videos/12345");
+    const start = screen.getByLabelText(/start timestamp/i);
+    fireEvent.change(start, { target: { value: "1:00:00" } });
+    expect(start).toHaveValue("1:00:00");
+  });
+
+  it("renders the full-video checkbox larger with a gray unchecked surface", () => {
+    render(<ReplayImportPanel onAnalyze={vi.fn()} />);
+    typeLink("https://youtu.be/dQw4w9WgXcQ");
+    const checkbox = screen.getByRole("checkbox", { name: /full video/i });
+    const swatch = checkbox.nextElementSibling as HTMLElement;
+    expect(swatch).toHaveClass("size-5", "bg-muted");
+    expect(checkbox.className).not.toContain("accent-primary");
+  });
+
   it("shows download progress when provided", () => {
     render(<ReplayImportPanel onAnalyze={vi.fn()} downloadProgress={42} />);
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42");

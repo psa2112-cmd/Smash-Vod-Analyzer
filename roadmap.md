@@ -1,5 +1,7 @@
 # Analysis workspace refinements
 
+- [ ] Replace only video-download timestamp inputs with the attached two-digit grouping, caret and blur validation.
+
 - [x] Add a top navigation header with links between / and /analyze.
 
 - [ ] Add draggable, resizable, hideable table columns and multi-column sorting.

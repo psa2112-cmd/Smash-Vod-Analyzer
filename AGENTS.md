@@ -17,3 +17,4 @@
 - Route all project file I/O through `src/features/analysis/storageAdapter.ts`; it swaps native file pickers for a local workspace store in preview.
 - Keep inline-edit parsing and tag-grid arrow navigation as pure helpers in `src/features/analysis/inlineEditing.ts`; this keeps them unit-testable apart from the UI.
 - Capture the undo history and snapshot when a table cell editor opens and rewind to both when it is cancelled; this keeps discarded cell edits out of the undo stack.
+- Video folder at ~/Videos/SmashReplayAnalyzer is defined in storageAdapter.ts; home page hands off imported replays through session storage so the analysis page can pick them up.

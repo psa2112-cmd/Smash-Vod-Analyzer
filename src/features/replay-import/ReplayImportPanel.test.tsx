@@ -34,14 +34,14 @@ describe("ReplayImportPanel", () => {
     typeLink("https://twitch.tv/videos/12345");
     expect(screen.getByRole("checkbox", { name: /full video/i })).not.toBeChecked();
     expect(screen.getByRole("button", { name: /analyze replay/i })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/start timestamp/i), { target: { value: "1:00:00" } });
-    fireEvent.change(screen.getByLabelText(/end timestamp/i), { target: { value: "1:20:00" } });
+    fireEvent.change(screen.getByLabelText(/start timestamp/i), { target: { value: "01:00:00" } });
+    fireEvent.change(screen.getByLabelText(/end timestamp/i), { target: { value: "01:20:00" } });
     expect(screen.getByText(/source accepted/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /analyze replay/i }));
     expect(onAnalyze).toHaveBeenCalledWith({
       kind: "twitch",
       url: "https://twitch.tv/videos/12345",
-      clipRange: { isFullVideo: false, startTimestamp: "1:00:00", endTimestamp: "1:20:00", startSeconds: 3600, endSeconds: 4800 },
+      clipRange: { isFullVideo: false, startTimestamp: "01:00:00", endTimestamp: "01:20:00", startSeconds: 3600, endSeconds: 4800 },
     });
   });
 
@@ -53,15 +53,29 @@ describe("ReplayImportPanel", () => {
     expect(start).toHaveValue("12:30");
     const end = screen.getByLabelText(/end timestamp/i);
     fireEvent.change(end, { target: { value: "14800" } });
-    expect(end).toHaveValue("1:48:00");
+    expect(end).toHaveValue("14:80:0");
   });
 
-  it("keeps timestamps the user typed with colons intact", () => {
+  it("regroups timestamps pasted with colons", () => {
     render(<ReplayImportPanel onAnalyze={vi.fn()} />);
     typeLink("https://twitch.tv/videos/12345");
     const start = screen.getByLabelText(/start timestamp/i);
     fireEvent.change(start, { target: { value: "1:00:00" } });
-    expect(start).toHaveValue("1:00:00");
+    expect(start).toHaveValue("10:00:0");
+  });
+
+  it("reports an invalid download timestamp when leaving the input", () => {
+    render(<ReplayImportPanel onAnalyze={vi.fn()} />);
+    typeLink("https://twitch.tv/videos/12345");
+    const start = screen.getByLabelText(/start timestamp/i) as HTMLInputElement;
+    fireEvent.change(start, { target: { value: "2460" } });
+    const reportValidity = vi.spyOn(start, "reportValidity");
+    fireEvent.blur(start);
+    expect(start.validationMessage).toBe("Enter a valid time");
+    expect(reportValidity).toHaveBeenCalled();
+    fireEvent.change(start, { target: { value: "1230" } });
+    fireEvent.blur(start);
+    expect(start.validationMessage).toBe("");
   });
 
   it("renders the full-video checkbox larger with a gray unchecked surface", () => {

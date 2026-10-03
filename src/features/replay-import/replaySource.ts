@@ -67,7 +67,7 @@ export function caretForDigitCount(formatted: string, count: number): number {
   if (count === 0) return 0;
   let seen = 0;
   for (let i = 0; i < formatted.length; i++) {
-    if (/\d/.test(formatted[i])) seen++;
+    if (/\d/.test(formatted.charAt(i))) seen++;
     if (seen === count) return i + 1;
   }
   return formatted.length;

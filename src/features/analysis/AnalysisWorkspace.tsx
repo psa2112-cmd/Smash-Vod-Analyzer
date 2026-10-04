@@ -12,6 +12,7 @@ import {
   FolderOpen,
   GripVertical,
   History,
+  Keyboard,
   ListFilter,
   Maximize2,
   Minimize2,
@@ -30,6 +31,9 @@ import {
 } from "lucide-react";
 import { formatTimestampInput, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions } from "./inlineEditing";
 import gameplayImage from "@/assets/analysis-gameplay.jpg";
+import type { ReactNode } from "react";
+import { ReplayMediaPlayer, type SeekRequest } from "./ReplayMediaPlayer";
+import { resolvePlaybackSource, resolvePlaybackSourceAsync } from "./playbackSource";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -91,6 +95,7 @@ import {
   hasNativeOpenPicker,
   isVideoAvailable,
   takePendingReplay,
+  takePendingProject,
   openProjectText,
   openProjectWithPicker,
   openStoredProject,
@@ -189,7 +194,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
   const [tablePreferences, setTablePreferences] = useState(DEFAULT_TABLE_PREFERENCES);
   const [selectedEventId, setSelectedEventId] = useState<string | null>("evt-1");
-  const [currentTime, setCurrentTime] = useState(17);
+  const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(72);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -197,6 +202,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isManualEventOpen, setIsManualEventOpenState] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const wasPlayingBeforeManualEventRef = useRef(false);
   /** Pauses playback while the add-event screen is open and restores the prior play state on close. */
   const setIsManualEventOpen = (shouldOpen: boolean) => {
@@ -221,6 +227,22 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [isVideoMissing, setIsVideoMissing] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(VIDEO_DURATION);
+  const [seekRequest, setSeekRequest] = useState<SeekRequest>({ time: 0, id: 0 });
+  // Start with what we can resolve right away, then let the desktop app upgrade it to a file on disk.
+  const [playbackSource, setPlaybackSource] = useState(() => resolvePlaybackSource(replay));
+  useEffect(() => {
+    let cancelled = false;
+    setPlaybackSource(resolvePlaybackSource(replay));
+    void resolvePlaybackSourceAsync(replay).then((source) => { if (!cancelled) setPlaybackSource(source); });
+    return () => { cancelled = true; };
+  }, [replay]);
+  /** Moves the playhead and tells the active media player to jump there. */
+  const seekTo = (time: number) => {
+    const clamped = Math.min(videoDuration, Math.max(0, time));
+    setCurrentTime(clamped);
+    setSeekRequest((request) => ({ time: clamped, id: request.id + 1 }));
+  };
   const [isSaving, setIsSaving] = useState(false);
   const unsavedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -274,20 +296,39 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     return () => window.clearTimeout(timer);
   }, [notification]);
 
+  
   useEffect(() => {
+    const pendingProject = takePendingProject();
+    if (pendingProject) {
+      handleOpenResult(openStoredProject(pendingProject.filePath, pendingProject.id));
+      return;
+    }
     const pendingReplay = takePendingReplay();
-    if (pendingReplay) setReplay(pendingReplay);
+    if (pendingReplay) {
+      setReplay(pendingReplay);
+      
+      // Start at 0, or at the start of a trimmed clip if one was specified:
+      const startTime = pendingReplay.clipRange?.startSeconds ?? 0;
+      setCurrentTime(startTime);
+      setSeekRequest({ time: startTime, id: 1 });
+      
+      // Clear the pre-selected sample event:
+      setSelectedEventId(null);
+    }
   }, []);
+
 
   useEffect(() => {
     let isCancelled = false;
+    setVideoDuration(VIDEO_DURATION);
+    if (playbackSource) { setIsVideoMissing(false); return; }
     void (async () => {
       const isAvailable = await isVideoAvailable(replay.videoPath);
       const isRecovered = isAvailable || (replay.originalUrl ? await redownloadVideo(replay.originalUrl, replay.clipRange) : false);
       if (!isCancelled) setIsVideoMissing(!isRecovered);
     })();
     return () => { isCancelled = true; };
-  }, [replay]);
+  }, [replay, playbackSource]);
 
   const rememberRecentProject = (handle: ProjectHandle) => {
     const next = addRecentProject(loadRecentProjects(), { ...handle, lastOpenedDate: new Date().toISOString() });
@@ -410,8 +451,9 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     }
   };
 
+  // Sample replay only: simulate playback. Real sources report time from the media player.
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || playbackSource) return;
     const timer = window.setInterval(() => {
       setCurrentTime((time) => {
         if (time >= VIDEO_DURATION) {
@@ -422,7 +464,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
       });
     }, 1000 / playbackRate);
     return () => window.clearInterval(timer);
-  }, [isPlaying, playbackRate]);
+  }, [isPlaying, playbackRate, playbackSource]);
 
   const applySnapshot = (snapshot: WorkspaceSnapshot) => {
     // Match notes are excluded from global history; only table data is restored.
@@ -519,7 +561,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     } else if (key in seekOffsets) {
       event.preventDefault();
       const offset = seekOffsets[key] ?? 0;
-      setCurrentTime((time) => Math.min(VIDEO_DURATION, Math.max(0, time + offset)));
+      seekTo(currentTime + offset);
     }
   };
 
@@ -540,7 +582,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   };
 
   const jumpToEvent = (event: AnalysisEvent) => {
-    setCurrentTime(seekTimeForEvent(event.timestamp));
+    seekTo(seekTimeForEvent(event.timestamp));
     setSelectedEventId(event.id);
     setIsPlaying(true);
   };
@@ -670,6 +712,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
             onOpenRecent: openRecentProject,
           }}
           onBack={analyzeNewReplay}
+          onOpenShortcuts={() => setIsShortcutsOpen(true)}
           onAddEvent={() => setIsManualEventOpen(true)}
           onToggleNotes={() => togglePanel("notes")}
           onToggleFilters={() => togglePanel("filters")}
@@ -699,13 +742,27 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
           <ResizablePanel id="video" minSize={200}>
             <VideoReviewPanel
               currentTime={currentTime}
+              duration={videoDuration}
+              media={playbackSource ? (
+                <ReplayMediaPlayer
+                  source={playbackSource}
+                  isPlaying={isPlaying}
+                  playbackRate={playbackRate}
+                  volume={volume}
+                  seekRequest={seekRequest}
+                  onTimeUpdate={setCurrentTime}
+                  onDurationChange={(duration) => { if (Number.isFinite(duration) && duration > 0) setVideoDuration(duration); }}
+                  onEnded={() => setIsPlaying(false)}
+                  onError={(message) => { setIsPlaying(false); setProjectError(message); }}
+                />
+              ) : null}
               isPlaying={isPlaying}
               playbackRate={playbackRate}
               volume={volume}
               replay={replay}
               isVideoMissing={isVideoMissing}
               onPlayToggle={() => setIsPlaying((playing) => !playing)}
-              onSeek={setCurrentTime}
+              onSeek={seekTo}
               onVolumeChange={setVolume}
               onPlaybackRateChange={setPlaybackRate}
               controlsVisible={controlsVisible}
@@ -793,6 +850,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
           onTagsChange={setManualTags}
           onSave={addManualEvent}
         />
+        <ShortcutsDialog open={isShortcutsOpen} onOpenChange={setIsShortcutsOpen} />
         <UnsavedChangesDialog
           open={pendingAction !== null}
           isSaving={isSaving}
@@ -860,7 +918,102 @@ function UnsavedChangesDialog({ open, isSaving, onSave, onDiscard, onCancel }: {
   );
 }
 
-function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedChangesPresent, notification, fileMenu, onBack, onAddEvent, onToggleNotes, onToggleFilters, onToggleControls, onSwap, onReset }: {
+interface ShortcutSection {
+  title: string;
+  shortcuts: { description: string; keys: string[] }[];
+}
+
+const SHORTCUT_SECTIONS: ShortcutSection[] = [
+  {
+    title: "Video Playback",
+    shortcuts: [
+      { description: "Play / Pause", keys: ["Space"] },
+      { description: "Step backward 1 frame", keys: ["J"] },
+      { description: "Step forward 1 frame", keys: ["K"] },
+      { description: "Rewind 1 second", keys: ["U"] },
+      { description: "Forward 1 second", keys: ["I"] },
+      { description: "Rewind 5 seconds", keys: ["7"] },
+      { description: "Forward 5 seconds", keys: ["8"] },
+      { description: "Jump video to selected event", keys: ["P"] },
+    ],
+  },
+  {
+    title: "Workspace Panels",
+    shortcuts: [
+      { description: "Toggle video controls", keys: ["Ctrl", "M"] },
+      { description: "Toggle match notes", keys: ["Ctrl", ","] },
+      { description: "Toggle filters", keys: ["Ctrl", "."] },
+    ],
+  },
+  {
+    title: "Table & Editing",
+    shortcuts: [
+      { description: "Add manual event", keys: ["Ctrl", "E"] },
+      { description: "Undo change", keys: ["Ctrl", "Z"] },
+      { description: "Redo change", keys: ["Ctrl", "Shift", "Z"] },
+      { description: "Multi-column sort", keys: ["Shift", "Click Header"] },
+      { description: "Save project", keys: ["Ctrl", "S"] },
+    ],
+  },
+  {
+    title: "Manual Event Dialog",
+    shortcuts: [
+      { description: "Save event", keys: ["Ctrl", "Enter"] },
+      { description: "Navigate tags", keys: ["Arrow Keys"] },
+      { description: "Toggle selected tag", keys: ["Shift", "Space"] },
+      { description: "Cancel / Close", keys: ["Esc"] },
+    ],
+  },
+];
+
+function ShortcutKeys({ keys }: { keys: string[] }) {
+  const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {keys.map((key, index) => (
+        <kbd
+          key={`${key}-${index}`}
+          className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] font-semibold text-secondary-foreground"
+        >
+          {key === "Ctrl" && isMac ? "⌘" : key}
+        </kbd>
+      ))}
+    </span>
+  );
+}
+
+function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+          <DialogDescription>Quick reference for playback, workspace panels, and editing</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {SHORTCUT_SECTIONS.map((section) => (
+            <section key={section.title} className="rounded-lg border border-border bg-card p-4">
+              <h3 className="mb-3 font-mono text-[11px] font-semibold uppercase tracking-widest text-notice">{section.title}</h3>
+              <ul className="space-y-2">
+                {section.shortcuts.map((shortcut) => (
+                  <li key={shortcut.description} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="min-w-0 text-foreground/90">{shortcut.description}</span>
+                    <ShortcutKeys keys={shortcut.keys} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedChangesPresent, notification, fileMenu, onBack, onOpenShortcuts, onAddEvent, onToggleNotes, onToggleFilters, onToggleControls, onSwap, onReset }: {
   eventCount: number;
   layout: WorkspaceLayout;
   controlsVisible: boolean;
@@ -869,6 +1022,7 @@ function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedCh
   notification: string | null;
   fileMenu: FileMenuActions;
   onBack: () => void;
+  onOpenShortcuts: () => void;
   onAddEvent: () => void;
   onToggleNotes: () => void;
   onToggleFilters: () => void;
@@ -881,6 +1035,10 @@ function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedCh
       <div className="flex min-w-0 items-center gap-4">
         <Button variant="ghost" size="icon" aria-label="Back to import" onClick={onBack}><ArrowLeft /></Button>
         <FileMenu {...fileMenu} />
+        <Button variant="ghost" size="sm" onClick={onOpenShortcuts} aria-label="Open keyboard shortcuts" className="gap-1.5 text-xs">
+          <Keyboard className="size-3.5 text-muted-foreground" />
+          Hotkeys
+        </Button>
         <div className="h-6 w-px bg-border" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -926,8 +1084,11 @@ function IconTip({ label, onClick, children }: { label: string; onClick: () => v
   );
 }
 
-function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
+function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
   currentTime: number;
+  duration: number;
+  /** Real replay stream; falls back to the sample still frame when absent. */
+  media: ReactNode | null;
   isPlaying: boolean;
   playbackRate: number;
   volume: number;
@@ -967,7 +1128,7 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
         </div>
       ) : (
         <>
-          <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />
+          {media ?? <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />}
           <button type="button" onClick={onPlayToggle} aria-label="Toggle playback from video" className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
           <div className="pointer-events-none absolute inset-0 bg-video-shade" />
         </>
@@ -977,12 +1138,12 @@ function VideoReviewPanel({ currentTime, isPlaying, playbackRate, volume, contro
         <Badge variant="outline" className="border-primary/40 bg-background/70 text-primary">Battlefield</Badge>
       </div>
       {controlsVisible && <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 pt-12">
-        <Slider aria-label="Video timeline" value={[currentTime]} min={0} max={VIDEO_DURATION} step={1} onValueChange={(value) => onSeek(value[0] ?? 0)} />
+        <Slider aria-label="Video timeline" value={[currentTime]} min={0} max={duration} step={1} onValueChange={(value) => onSeek(value[0] ?? 0)} />
         <div className="mt-3 flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={onPlayToggle} aria-label={isPlaying ? "Pause replay" : "Play replay"} className="bg-background/55 hover:bg-background/80">
             {isPlaying ? <Pause /> : <Play />}
           </Button>
-          <span data-testid="playhead-time" className="w-24 font-mono text-xs">{formatTimestamp(currentTime)} / {formatTimestamp(VIDEO_DURATION)}</span>
+          <span data-testid="playhead-time" className="w-24 font-mono text-xs">{formatTimestamp(Math.floor(currentTime))} / {formatTimestamp(Math.floor(duration))}</span>
           <Volume2 className="size-4 text-muted-foreground" aria-hidden />
           <Slider aria-label="Volume" className="w-24" value={[volume]} min={0} max={100} onValueChange={(value) => onVolumeChange(value[0] ?? 0)} />
           <div className="ml-auto flex items-center gap-1">

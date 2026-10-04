@@ -18,3 +18,4 @@
 - Keep inline-edit parsing and tag-grid arrow navigation as pure helpers in `src/features/analysis/inlineEditing.ts`; this keeps them unit-testable apart from the UI.
 - Capture the undo history and snapshot when a table cell editor opens and rewind to both when it is cancelled; this keeps discarded cell edits out of the undo stack.
 - Video folder at ~/Videos/SmashReplayAnalyzer is defined in storageAdapter.ts; home page hands off imported replays through session storage so the analysis page can pick them up.
+- Route all desktop (Tauri) capabilities through `src/features/desktop/desktopBridge.ts`, with browser fallbacks when a bridge method is missing; this keeps the app runnable in browser preview and tests.

@@ -73,7 +73,7 @@ export function caretForDigitCount(formatted: string, count: number): number {
   return formatted.length;
 }
 
-export const DOWNLOAD_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+export const DOWNLOAD_TIME_PATTERN = /^(([0-5]\d:[0-5]\d)|(\d{1,2}:[0-5]\d:[0-5]\d))$/;
 
 /** Parses "mm:ss" or "hh:mm:ss" into seconds; null when malformed. */
 export function parseClipTimestamp(raw: string): number | null {

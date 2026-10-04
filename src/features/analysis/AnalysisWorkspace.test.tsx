@@ -201,7 +201,7 @@ describe("AnalysisWorkspace", () => {
     expect(screen.getByRole("button", { name: /play replay/i })).toBeInTheDocument();
     (document.activeElement as HTMLElement | null)?.blur();
     await user.keyboard("8");
-    expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:22");
+    expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:05");
     await user.keyboard("7u");
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:16");
     await user.keyboard("{Control>}m{/Control}");
@@ -266,7 +266,7 @@ describe("AnalysisWorkspace save & load", () => {
 
   it("asks before closing through the desktop bridge", async () => {
     let closeHandler: (() => boolean) | null = null;
-    window.desktopBridge = { onCloseRequested: (handler) => { closeHandler = handler; } };
+    window.desktopBridge = { isDesktop: true, confirmClose: () => undefined, onCloseRequested: (handler) => { closeHandler = handler; } };
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);
     fireEvent.change(screen.getByLabelText("Match notes", { exact: true }), { target: { value: "Changed notes" } });

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { PROJECT_FILE_EXTENSION, parseProjectFile, serializeProjectFile, type ParseProjectResult, type VodProjectFile } from "./projectFile";
+import { getDesktopBridge, type DesktopBridge, type DownloadClipRange } from "@/features/desktop/desktopBridge";
 
 export const AUTOSAVE_INTERVAL_MS = 300_000;
 export const NOTIFICATION_DURATION_MS = 5_000;
@@ -15,10 +16,12 @@ interface NativePickerWindow {
   showSaveFilePicker?: (options: unknown) => Promise<NativeFileHandle>;
   showOpenFilePicker?: (options: unknown) => Promise<NativeFileHandle[]>;
 }
-export interface DesktopBridge { onCloseRequested?: (handler: () => boolean) => (() => void) | void; confirmClose?: () => void }
-declare global { interface Window { desktopBridge?: DesktopBridge } }
+// Kept here too so older imports of DesktopBridge from this file keep working.
+export type { DesktopBridge };
 
 const PICKER_TYPES = [{ description: "Replay analysis project", accept: { "application/json": [PROJECT_FILE_EXTENSION] } }];
+/** Same file filter, in the shape the desktop file dialogs expect. */
+const DIALOG_FILTERS = [{ name: "Replay analysis project", extensions: [PROJECT_FILE_EXTENSION.replace(/^\./, "")] }];
 const nativeHandles = new Map<string, NativeFileHandle>();
 
 const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "replay";
@@ -38,10 +41,25 @@ export function readWorkspaceStore(filePath: string): string | null {
 /** Writes a project to the active handle, a native picker, or the local workspace store fallback. */
 export async function saveProject(project: VodProjectFile, handle: ProjectHandle | null): Promise<ProjectHandle | null> {
   const contents = serializeProjectFile(project);
-  const picker = window as unknown as NativePickerWindow;
-  let activeHandle = handle;
   console.info("[storageAdapter] save start", { filePath: handle?.filePath ?? null, events: project.table.events.length });
 
+  // Desktop app: ask where to save (first time only), then write straight to disk.
+  const bridge = getDesktopBridge();
+  if (bridge?.saveFileDialog && bridge.writeTextFile) {
+    let filePath = handle?.filePath ?? null;
+    if (!handle) {
+      filePath = await bridge.saveFileDialog({ defaultPath: `${slugify(project.replay.title)}${PROJECT_FILE_EXTENSION}`, filters: DIALOG_FILTERS });
+      if (!filePath) return null; // user cancelled
+    }
+    const savedPath = filePath as string;
+    await bridge.writeTextFile(savedPath, contents);
+    writeWorkspaceStore(savedPath, contents); // keeps "Recently opened" working
+    return handle ?? { id: createProjectId(), name: nameFromPath(savedPath), filePath: savedPath };
+  }
+
+  // Browser: use the browser's save picker if available, otherwise keep it in local storage.
+  const picker = window as unknown as NativePickerWindow;
+  let activeHandle = handle;
   const existingNative = handle ? nativeHandles.get(handle.filePath) : undefined;
   if (!activeHandle && picker.showSaveFilePicker) {
     try {
@@ -75,10 +93,27 @@ export function openProjectText(text: string, filePath: string, id: string = cre
   return { ok: true, project: parsed.project, handle: { id, name: nameFromPath(filePath), filePath } };
 }
 
-export const hasNativeOpenPicker = () => typeof (window as unknown as NativePickerWindow).showOpenFilePicker === "function";
+export const hasNativeOpenPicker = () => {
+  const bridge = getDesktopBridge();
+  if (bridge?.openFileDialog && bridge.readTextFile) return true;
+  return typeof (window as unknown as NativePickerWindow).showOpenFilePicker === "function";
+};
 
-/** Opens a project with the native picker. Returns null when cancelled or unsupported. */
+/** Opens a project with the desktop or browser file picker. Returns null when cancelled or unsupported. */
 export async function openProjectWithPicker(): Promise<OpenProjectResult | null> {
+  // Desktop app: use the system "Open" window and read the file straight from disk.
+  const bridge = getDesktopBridge();
+  if (bridge?.openFileDialog && bridge.readTextFile) {
+    try {
+      const filePath = await bridge.openFileDialog({ filters: DIALOG_FILTERS });
+      if (!filePath) return null;
+      return openProjectText(await bridge.readTextFile(filePath), filePath);
+    } catch (error) {
+      console.error("[storageAdapter] desktop open failed", error);
+      return { ok: false, error: "The project could not be opened. Try choosing the file again." };
+    }
+  }
+  // Browser: use the browser's own file picker when it has one.
   const picker = window as unknown as NativePickerWindow;
   if (!picker.showOpenFilePicker) return null;
   try {
@@ -100,8 +135,10 @@ export function openStoredProject(filePath: string, id: string): OpenProjectResu
   return openProjectText(text, filePath, id);
 }
 
-/** Resolves whether a replay's video can be played in this environment. */
+/** Checks whether a replay's video can be played. The desktop app checks the disk; the browser checks links. */
 export async function isVideoAvailable(videoPath: string): Promise<boolean> {
+  const bridge = getDesktopBridge();
+  if (bridge?.fileExists) return bridge.fileExists(videoPath);
   if (videoPath === SAMPLE_VIDEO_PATH) return true;
   if (/^https?:\/\//.test(videoPath)) {
     try {
@@ -141,8 +178,6 @@ export function useCloseInterceptor(hasUnsavedChanges: boolean, onCloseRequested
 export const VIDEO_STORAGE_FOLDER = "~/Videos/SmashReplayAnalyzer";
 const PENDING_REPLAY_KEY = "smash-replay-pending-import";
 
-interface DownloadClipRange { isFullVideo: boolean; startSeconds?: number; endSeconds?: number }
-
 export function buildVideoFileName(url: string, clipRange: DownloadClipRange): string {
   const youtubeId = url.match(/(?:v=|youtu\.be\/|live\/|shorts\/)([\w-]{6,})/)?.[1];
   const twitchId = url.match(/videos\/(\d+)/)?.[1];
@@ -152,8 +187,10 @@ export function buildVideoFileName(url: string, clipRange: DownloadClipRange): s
 }
 
 /**
- * Downloads the selected section into the managed video folder.
- * The preview simulates progress; the packaged desktop app performs the real download.
+ * Downloads the chosen part of a video.
+ * - Desktop app: the desktop side does the real download and tells us where it saved the file.
+ * - Browser: nothing can really be downloaded, so we pretend with a short progress loop.
+ *   (The home page skips this entirely in the browser and streams the video instead.)
  */
 export async function downloadReplayVideo(
   url: string,
@@ -161,6 +198,11 @@ export async function downloadReplayVideo(
   onProgress: (percent: number) => void,
   stepDelayMs = 120,
 ): Promise<string> {
+  const bridge = getDesktopBridge();
+  if (bridge?.downloadVideo) {
+    const { filePath } = await bridge.downloadVideo({ url, clipRange, onProgress });
+    return filePath;
+  }
   const videoPath = `${VIDEO_STORAGE_FOLDER}/${buildVideoFileName(url, clipRange)}`;
   console.info("[storageAdapter] download start", { url, clipRange, videoPath });
   for (let percent = 10; percent <= 100; percent += 10) {
@@ -170,6 +212,9 @@ export async function downloadReplayVideo(
   console.info("[storageAdapter] download complete", { videoPath });
   return videoPath;
 }
+
+/** True when the app can really download videos (only in the desktop app). */
+export const canDownloadVideos = () => Boolean(getDesktopBridge()?.downloadVideo);
 
 export interface PendingReplay { videoPath: string; title: string; originalUrl?: string; clipRange?: DownloadClipRange & { startTimestamp?: string; endTimestamp?: string } }
 
@@ -189,6 +234,27 @@ export function takePendingReplay(): PendingReplay | null {
     }
   } catch {
     console.warn("[storageAdapter] pending replay unreadable");
+  }
+  return null;
+}
+
+const PENDING_PROJECT_KEY = "smash-replay-pending-project";
+
+/** Hands an opened project (already in the workspace store) from the home page to the analysis page. */
+export function setPendingProject(handle: ProjectHandle): void {
+  window.sessionStorage.setItem(PENDING_PROJECT_KEY, JSON.stringify(handle));
+}
+
+/** Returns and clears the project handed off from the home page, if any. */
+export function takePendingProject(): ProjectHandle | null {
+  const raw = window.sessionStorage.getItem(PENDING_PROJECT_KEY);
+  if (!raw) return null;
+  window.sessionStorage.removeItem(PENDING_PROJECT_KEY);
+  try {
+    const parsed = JSON.parse(raw) as ProjectHandle;
+    if (parsed && typeof parsed.filePath === "string" && typeof parsed.id === "string") return parsed;
+  } catch {
+    console.warn("[storageAdapter] pending project unreadable");
   }
   return null;
 }

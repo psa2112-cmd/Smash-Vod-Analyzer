@@ -30,10 +30,18 @@ describe("timestamp caret", () => {
 });
 
 describe("parseClipTimestamp", () => {
-  it("parses mm:ss", () => expect(parseClipTimestamp("12:30")).toBe(750));
-  it("parses hh:mm:ss", () => expect(parseClipTimestamp("01:45:20")).toBe(6320));
-  it.each(["", "1:2", "1:00:00", "24:00", "12:60", "abc", "1:00:00:00"])("rejects %s", (raw) => expect(parseClipTimestamp(raw)).toBeNull());
+  it("parses mm:ss", () => {
+    expect(parseClipTimestamp("12:30")).toBe(750);
+    expect(parseClipTimestamp("24:00")).toBe(1440);
+    expect(parseClipTimestamp("30:00")).toBe(1800);
+  });
+  it("parses hh:mm:ss", () => {
+    expect(parseClipTimestamp("01:45:20")).toBe(6320);
+    expect(parseClipTimestamp("1:00:00")).toBe(3600);
+  });
+  it.each(["", "1:2", "12:60", "abc", "1:00:00:00"])("rejects %s", (raw) => expect(parseClipTimestamp(raw)).toBeNull());
 });
+
 
 describe("validateClipRange", () => {
   it("returns a full range when full video", () => {

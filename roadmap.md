@@ -4,9 +4,9 @@
 
 - [x] Add a top navigation header with links between / and /analyze.
 
-- [ ] Add draggable, resizable, hideable table columns and multi-column sorting.
+- [x] Add draggable, resizable, hideable table columns and multi-column sorting.
 - [x] Close tag editing on outside click and theme the table scrollbars.
-- [ ] Verify table tests and desktop preview.
+- [x] Verify table tests and desktop preview.
 
 - [x] Fit the full 16:9 replay in a half-screen-height resizable panel with blended side bars.
 - [x] Add vertical resizing between the event table and lower panels, and enable normal page scrolling.

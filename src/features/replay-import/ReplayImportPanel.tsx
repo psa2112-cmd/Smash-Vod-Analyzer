@@ -25,7 +25,13 @@ interface ReplayImportPanelProps {
   downloadProgress?: number | null;
 }
 
-const LINK_ERROR = "Paste a YouTube video or Twitch VOD link (twitch.tv/videos/…).";
+// ALPHA BUILD: original message was "Paste a YouTube video or Twitch VOD link (twitch.tv/videos/…)."
+const LINK_ERROR = "Paste a YouTube video link.";
+/** ALPHA BUILD flag: flip to true to allow Twitch VOD imports again. */
+const TWITCH_ENABLED = false;
+/** ALPHA BUILD flag: flip to true to show the "Full video" checkbox and clip start/end inputs again. */
+const CLIP_RANGE_ENABLED: boolean = false;
+const TWITCH_DISABLED_ERROR = "Twitch VODs aren't supported in this build yet. Please use a YouTube link or a local video file.";
 
 export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportPanelProps) {
   const [file, setFile] = useState<File | null>(null);
@@ -41,7 +47,10 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
   const ids = { link: useId(), full: useId(), start: useId(), end: useId(), file: useId() };
 
   const platform = detectLinkPlatform(link);
-  const linkError = link.trim() && !platform ? LINK_ERROR : null;
+  // ALPHA BUILD: Twitch VODs are disabled and show an error instead.
+  // To re-enable Twitch, set TWITCH_ENABLED to true (original line: `link.trim() && !platform ? LINK_ERROR : null`).
+  const isTwitchBlocked = !TWITCH_ENABLED && platform === "twitch";
+  const linkError = isTwitchBlocked ? TWITCH_DISABLED_ERROR : link.trim() && !platform ? LINK_ERROR : null;
   const clipResult = platform ? validateClipRange(isFullVideo, startTime, endTime) : null;
   const hasTypedRange = Boolean(startTime.trim() && endTime.trim());
   const clipError = clipResult && !clipResult.ok && hasTypedRange ? clipResult.error : null;
@@ -88,9 +97,10 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
     setLink(raw);
   };
 
+  // ALPHA BUILD: Twitch links are blocked. To re-enable Twitch, remove `!isTwitchBlocked &&`.
   const acceptedSource: ReplaySource | null = file
     ? { kind: "file", file }
-    : platform && clipResult?.ok
+    : !isTwitchBlocked && platform && clipResult?.ok
       ? { kind: platform, url: link.trim(), clipRange: clipResult.value }
       : null;
 
@@ -130,7 +140,8 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
             id={ids.link}
             type="url"
             autoComplete="off"
-            placeholder="YouTube or Twitch VOD link"
+            // ALPHA BUILD: Twitch disabled. Original placeholder: "YouTube or Twitch VOD link"
+            placeholder="YouTube video link"
             value={link}
             onChange={(e) => handleLinkChange(e.target.value)}
             aria-invalid={Boolean(linkError)}
@@ -140,7 +151,12 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
           {linkError && <FieldError id={`${ids.link}-error`} message={linkError} />}
         </div>
 
-        {platform && (
+        {/*
+          ALPHA BUILD: the "Full video" checkbox and clip start/end inputs are hidden.
+          Links always import the full video (isFullVideo stays true).
+          To restore clip trimming, set CLIP_RANGE_ENABLED to true.
+        */}
+        {CLIP_RANGE_ENABLED && platform && (
           <fieldset className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/30 p-4">
             <legend className="sr-only">Download range</legend>
             <label htmlFor={ids.full} className="flex w-fit cursor-pointer items-center gap-2 text-sm">

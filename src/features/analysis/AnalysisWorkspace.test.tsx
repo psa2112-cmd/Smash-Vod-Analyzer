@@ -8,6 +8,15 @@ import { createProjectFile, serializeProjectFile } from "./projectFile";
 describe("AnalysisWorkspace", () => {
   beforeEach(() => window.localStorage.clear());
 
+  it("starts an unimported workspace with an untitled review and no sample video", async () => {
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    expect(screen.getByRole("heading", { name: "Untitled Review" })).toBeInTheDocument();
+    expect(await screen.findByText("No Video Found")).toBeInTheDocument();
+    const player = screen.getByRole("region", { name: "Video player" });
+    expect(player.querySelector("img")).toBeNull();
+    expect(player.querySelector('[data-slot="badge"]')).toBeNull();
+  });
+
   it("sorts the event table and seeks from a timestamp", async () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);

@@ -1,5 +1,7 @@
 # Analysis workspace refinements
 
+- [x] Use “Untitled Review” for an empty workspace, remove the sample video, and delete stage/game-number labels.
+
 - [ ] Replace only video-download timestamp inputs with the attached two-digit grouping, caret and blur validation.
 
 - [x] Add a top navigation header with links between / and /analyze.

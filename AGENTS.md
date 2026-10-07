@@ -19,3 +19,5 @@
 - Capture the undo history and snapshot when a table cell editor opens and rewind to both when it is cancelled; this keeps discarded cell edits out of the undo stack.
 - Video folder at ~/Videos/SmashReplayAnalyzer is defined in storageAdapter.ts; home page hands off imported replays through session storage so the analysis page can pick them up.
 - Route all desktop (Tauri) capabilities through `src/features/desktop/desktopBridge.ts`, with browser fallbacks when a bridge method is missing; this keeps the app runnable in browser preview and tests.
+
+- Tauri backend lives in src-tauri/ (Rust commands + bridge.js injected via window.eval); bridge.js implements the DesktopBridge contract from src/features/desktop/desktopBridge.ts. yt-dlp/ffmpeg ship as sidecars in src-tauri/binaries/.

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { ReplayImportPanel, type ReplaySource } from "@/features/replay-import/ReplayImportPanel";
 import { canDownloadVideos, downloadReplayVideo, hasNativeOpenPicker, openProjectText, openProjectWithPicker, openStoredProject, setPendingProject, setPendingReplay, type OpenProjectResult } from "@/features/analysis/storageAdapter";
 import { registerLocalVideo } from "@/features/analysis/playbackSource";
+import { fetchYouTubeTitle } from "@/features/replay-import/youtubeUrl";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -33,14 +34,14 @@ function HomePage() {
   const handleOpenResult = (result: OpenProjectResult | null) => {
     if (!result) return;
     if (!result.ok) { toast.error(result.error); return; }
-    setPendingProject(result.handle);
+    setPendingProject(result.handle, result.project);
     void navigate({ to: "/analyze" });
   };
   const openProject = () => {
     if (hasNativeOpenPicker()) void openProjectWithPicker().then(handleOpenResult);
     else fileInputRef.current?.click();
   };
-  const openRecentProject = (project: RecentProject) => handleOpenResult(openStoredProject(project.filePath, project.id));
+  const openRecentProject = (project: RecentProject) => void openStoredProject(project.filePath, project.id).then(handleOpenResult);
   const onProjectFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -61,14 +62,17 @@ function HomePage() {
         setPendingReplay({ videoPath: source.file.name, title: source.file.name });
       } else {
         const platformName = source.kind === "youtube" ? "YouTube" : "Twitch VOD";
+        // Grab the real video title; fall back to a generic one if the lookup fails.
+        const fetchedTitle = source.kind === "youtube" ? await fetchYouTubeTitle(source.url) : null;
+        const title = fetchedTitle ?? `${platformName} replay`;
         let videoPath = source.url;
         // Only the desktop app can really download, so only it shows the progress bar.
         // In the browser we skip straight to the analysis page and stream the video.
         if (canDownloadVideos()) {
           setDownloadProgress(0);
-          videoPath = await downloadReplayVideo(source.url, source.clipRange, setDownloadProgress);
+          videoPath = await downloadReplayVideo(source.url, source.clipRange, setDownloadProgress, undefined, fetchedTitle ?? undefined);
         }
-        setPendingReplay({ videoPath, title: `${platformName} replay`, originalUrl: source.url, clipRange: source.clipRange });
+        setPendingReplay({ videoPath, title, originalUrl: source.url, clipRange: source.clipRange });
       }
       await navigate({ to: "/analyze" });
     } catch (error) {
@@ -89,8 +93,16 @@ function HomePage() {
             Replay <span className="text-primary">Analyzer</span>
           </h1>
           <p className="mt-4 text-muted-foreground">
-            Drop in a match. We find every hit and give you timestamps to jump, tag and learn from.
+            Drop in a match. Create timestamps to jump, tag and learn from. 
           </p>
+          <div className="mt-2 text-sm font-medium text-destructive">
+            <p>This is an alpha build. Some features are unsuporrted. There are also probably bugs.</p>
+            <h2 className="mt-3 text-base font-semibold">Unsupported/unfinished features:</h2>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5">
+              <li>Twitch VOD Support</li>
+              <li>Event filters (but sorting the table does work)</li>
+            </ul>
+          </div>
         </header>
         <section aria-label="Import replay" className="rounded-xl border border-border bg-card/80 p-6 shadow-panel backdrop-blur">
           <ReplayImportPanel onAnalyze={handleAnalyze} downloadProgress={downloadProgress} />

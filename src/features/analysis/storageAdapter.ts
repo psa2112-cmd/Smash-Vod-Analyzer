@@ -1,11 +1,10 @@
 import { useEffect, useRef } from "react";
 import { PROJECT_FILE_EXTENSION, parseProjectFile, serializeProjectFile, type ParseProjectResult, type VodProjectFile } from "./projectFile";
 import { getDesktopBridge, type DesktopBridge, type DownloadClipRange } from "@/features/desktop/desktopBridge";
+import { extractYouTubeId } from "@/features/replay-import/youtubeUrl";
 
 export const AUTOSAVE_INTERVAL_MS = 300_000;
 export const NOTIFICATION_DURATION_MS = 5_000;
-export const SAMPLE_VIDEO_PATH = "sample://mario-vs-pikachu-battlefield.mp4";
-const WORKSPACE_STORE_PREFIX = "smash-replay-project:";
 
 export interface ProjectHandle { id: string; name: string; filePath: string }
 export type OpenProjectResult = ({ ok: true; project: VodProjectFile; handle: ProjectHandle }) | { ok: false; error: string };
@@ -30,15 +29,31 @@ const nameFromPath = (path: string) => path.split(/[\\/]/).pop()?.replace(PROJEC
 
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 
-function writeWorkspaceStore(filePath: string, contents: string) {
-  window.localStorage.setItem(WORKSPACE_STORE_PREFIX + filePath, contents);
+/**
+ * Last-resort save: hands the project to the browser as a normal file download
+ * (lands in the user's Downloads folder). Used when the browser can't open a real
+ * "Save As" window, e.g. inside the preview frame, Safari or Firefox.
+ */
+function downloadProjectFile(fileName: string, contents: string) {
+  const blob = new Blob([contents], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Give the browser a moment to start the download before freeing the memory.
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-export function readWorkspaceStore(filePath: string): string | null {
-  return window.localStorage.getItem(WORKSPACE_STORE_PREFIX + filePath);
-}
-
-/** Writes a project to the active handle, a native picker, or the local workspace store fallback. */
+/**
+ * Saves a project. Three tiers, tried in order:
+ * 1. Desktop app: write straight to the file on disk.
+ * 2. Modern browser tab: use the browser's "Save As" window, then update that same file on later saves.
+ * 3. Fallback: trigger a normal browser download of the .vodproject file.
+ * Project contents are never kept in browser storage.
+ */
 export async function saveProject(project: VodProjectFile, handle: ProjectHandle | null): Promise<ProjectHandle | null> {
   const contents = serializeProjectFile(project);
   console.info("[storageAdapter] save start", { filePath: handle?.filePath ?? null, events: project.table.events.length });
@@ -53,7 +68,6 @@ export async function saveProject(project: VodProjectFile, handle: ProjectHandle
     }
     const savedPath = filePath as string;
     await bridge.writeTextFile(savedPath, contents);
-    writeWorkspaceStore(savedPath, contents); // keeps "Recently opened" working
     return handle ?? { id: createProjectId(), name: nameFromPath(savedPath), filePath: savedPath };
   }
 
@@ -77,11 +91,14 @@ export async function saveProject(project: VodProjectFile, handle: ProjectHandle
   }
   const nativeHandle = existingNative ?? nativeHandles.get(activeHandle.filePath);
   if (nativeHandle) {
+    // Tier 2: update the file the user picked, in place.
     const writable = await nativeHandle.createWritable();
     await writable.write(contents);
     await writable.close();
+  } else {
+    // Tier 3: no real file access, so download a copy instead.
+    downloadProjectFile(activeHandle.filePath, contents);
   }
-  writeWorkspaceStore(activeHandle.filePath, contents);
   console.info("[storageAdapter] save complete", { filePath: activeHandle.filePath });
   return activeHandle;
 }
@@ -89,7 +106,6 @@ export async function saveProject(project: VodProjectFile, handle: ProjectHandle
 export function openProjectText(text: string, filePath: string, id: string = createProjectId()): OpenProjectResult {
   const parsed: ParseProjectResult = parseProjectFile(text);
   if (!parsed.ok) return parsed;
-  writeWorkspaceStore(filePath, text);
   return { ok: true, project: parsed.project, handle: { id, name: nameFromPath(filePath), filePath } };
 }
 
@@ -129,17 +145,24 @@ export async function openProjectWithPicker(): Promise<OpenProjectResult | null>
   }
 }
 
-export function openStoredProject(filePath: string, id: string): OpenProjectResult {
-  const text = readWorkspaceStore(filePath);
-  if (text === null) return { ok: false, error: `The project "${nameFromPath(filePath)}" could not be found. It may have been moved or deleted.` };
-  return openProjectText(text, filePath, id);
+export const RECENT_UNAVAILABLE_IN_BROWSER = "Web browsers cannot silently open files from your hard drive. Please use \"Open from disk\" to select your file.";
+
+/** Reopens a recent project. Only the desktop app can read a file by its path; browsers must use the file picker. */
+export async function openStoredProject(filePath: string, id: string): Promise<OpenProjectResult> {
+  const bridge = getDesktopBridge();
+  if (!bridge?.readTextFile) return { ok: false, error: RECENT_UNAVAILABLE_IN_BROWSER };
+  try {
+    return openProjectText(await bridge.readTextFile(filePath), filePath, id);
+  } catch (error) {
+    console.error("[storageAdapter] recent project read failed", error);
+    return { ok: false, error: `The project "${nameFromPath(filePath)}" could not be found. It may have been moved or deleted.` };
+  }
 }
 
 /** Checks whether a replay's video can be played. The desktop app checks the disk; the browser checks links. */
 export async function isVideoAvailable(videoPath: string): Promise<boolean> {
   const bridge = getDesktopBridge();
   if (bridge?.fileExists) return bridge.fileExists(videoPath);
-  if (videoPath === SAMPLE_VIDEO_PATH) return true;
   if (/^https?:\/\//.test(videoPath)) {
     try {
       const response = await fetch(videoPath, { method: "HEAD" });
@@ -178,11 +201,22 @@ export function useCloseInterceptor(hasUnsavedChanges: boolean, onCloseRequested
 export const VIDEO_STORAGE_FOLDER = "~/Videos/SmashReplayAnalyzer";
 const PENDING_REPLAY_KEY = "smash-replay-pending-import";
 
-export function buildVideoFileName(url: string, clipRange: DownloadClipRange): string {
-  const youtubeId = url.match(/(?:v=|youtu\.be\/|live\/|shorts\/)([\w-]{6,})/)?.[1];
+/**
+ * Builds the file name for a downloaded video.
+ * - With a title: "sparg0-vs-mkleo-aBc123XyZ-full.mp4" (the id keeps same-titled videos from colliding).
+ * - Without a title (lookup failed): falls back to "youtube-aBc123XyZ-full.mp4".
+ */
+export function buildVideoFileName(url: string, clipRange: DownloadClipRange, videoTitle?: string): string {
+  // YouTube id extraction is shared via replay-import/youtubeUrl.ts.
+  const youtubeId = extractYouTubeId(url);
   const twitchId = url.match(/videos\/(\d+)/)?.[1];
-  const base = youtubeId ? `youtube-${youtubeId}` : twitchId ? `twitch-${twitchId}` : `replay-${slugify(url)}`;
   const range = clipRange.isFullVideo ? "full" : `${clipRange.startSeconds ?? 0}-${clipRange.endSeconds ?? 0}`;
+  const sourceId = youtubeId ?? twitchId;
+  if (videoTitle?.trim()) {
+    const idSuffix = sourceId ? `-${sourceId}` : "";
+    return `${slugify(videoTitle)}${idSuffix}-${range}.mp4`;
+  }
+  const base = youtubeId ? `youtube-${youtubeId}` : twitchId ? `twitch-${twitchId}` : `replay-${slugify(url)}`;
   return `${base}-${range}.mp4`;
 }
 
@@ -197,13 +231,15 @@ export async function downloadReplayVideo(
   clipRange: DownloadClipRange,
   onProgress: (percent: number) => void,
   stepDelayMs = 120,
+  videoTitle?: string,
 ): Promise<string> {
+  const fileName = buildVideoFileName(url, clipRange, videoTitle);
   const bridge = getDesktopBridge();
   if (bridge?.downloadVideo) {
-    const { filePath } = await bridge.downloadVideo({ url, clipRange, onProgress });
+    const { filePath } = await bridge.downloadVideo({ url, clipRange, onProgress, fileName });
     return filePath;
   }
-  const videoPath = `${VIDEO_STORAGE_FOLDER}/${buildVideoFileName(url, clipRange)}`;
+  const videoPath = `${VIDEO_STORAGE_FOLDER}/${fileName}`;
   console.info("[storageAdapter] download start", { url, clipRange, videoPath });
   for (let percent = 10; percent <= 100; percent += 10) {
     await new Promise((resolve) => setTimeout(resolve, stepDelayMs));
@@ -239,20 +275,22 @@ export function takePendingReplay(): PendingReplay | null {
 }
 
 const PENDING_PROJECT_KEY = "smash-replay-pending-project";
+interface PendingProjectPayload { handle: ProjectHandle; text: string }
 
-/** Hands an opened project (already in the workspace store) from the home page to the analysis page. */
-export function setPendingProject(handle: ProjectHandle): void {
-  window.sessionStorage.setItem(PENDING_PROJECT_KEY, JSON.stringify(handle));
+/** Hands an opened project (handle + file text) from the home page to the analysis page. One-time, tab-only. */
+export function setPendingProject(handle: ProjectHandle, project: VodProjectFile): void {
+  const payload: PendingProjectPayload = { handle, text: serializeProjectFile(project) };
+  window.sessionStorage.setItem(PENDING_PROJECT_KEY, JSON.stringify(payload));
 }
 
 /** Returns and clears the project handed off from the home page, if any. */
-export function takePendingProject(): ProjectHandle | null {
+export function takePendingProject(): OpenProjectResult | null {
   const raw = window.sessionStorage.getItem(PENDING_PROJECT_KEY);
   if (!raw) return null;
   window.sessionStorage.removeItem(PENDING_PROJECT_KEY);
   try {
-    const parsed = JSON.parse(raw) as ProjectHandle;
-    if (parsed && typeof parsed.filePath === "string" && typeof parsed.id === "string") return parsed;
+    const parsed = JSON.parse(raw) as PendingProjectPayload;
+    if (parsed?.handle && typeof parsed.text === "string") return openProjectText(parsed.text, parsed.handle.filePath, parsed.handle.id);
   } catch {
     console.warn("[storageAdapter] pending project unreadable");
   }

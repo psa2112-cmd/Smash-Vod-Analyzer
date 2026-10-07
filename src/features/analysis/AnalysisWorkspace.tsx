@@ -30,10 +30,9 @@ import {
   X,
 } from "lucide-react";
 import { formatTimestampInput, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions } from "./inlineEditing";
-import gameplayImage from "@/assets/analysis-gameplay.jpg";
 import type { ReactNode } from "react";
 import { ReplayMediaPlayer, type SeekRequest } from "./ReplayMediaPlayer";
-import { resolvePlaybackSource, resolvePlaybackSourceAsync } from "./playbackSource";
+import { resolvePlaybackSource, resolvePlaybackSourceAsync, revokeAllLocalVideos } from "./playbackSource";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -91,7 +90,6 @@ import {
 import {
   AUTOSAVE_INTERVAL_MS,
   NOTIFICATION_DURATION_MS,
-  SAMPLE_VIDEO_PATH,
   hasNativeOpenPicker,
   isVideoAvailable,
   takePendingReplay,
@@ -178,7 +176,10 @@ function saveTablePreferences(preferences: TablePreferences) {
 const FRAME_SECONDS = 1 / 60;
 const VERTICAL_HANDLE_CLASS = "group h-2 w-full cursor-row-resize bg-border/40 transition-colors hover:bg-primary/50 data-[separator=active]:bg-primary/70 focus-visible:bg-primary/60 after:hidden";
 
-const DEFAULT_REPLAY: ProjectReplayInfo = { videoPath: SAMPLE_VIDEO_PATH, title: "Mario vs. Pikachu · Battlefield" };
+// A workspace without an imported replay must not pretend a sample video exists.
+const DEFAULT_REPLAY: ProjectReplayInfo = { videoPath: "", title: "Untitled Review" };
+/** ALPHA BUILD: events the table starts with. Set to INITIAL_ANALYSIS_EVENTS to bring back sample data. */
+const STARTING_EVENTS: AnalysisEvent[] = [];
 
 export interface BlockedNavigation { proceed: () => void; cancel: () => void }
 interface PendingAction { proceed: () => void; cancel?: () => void }
@@ -190,10 +191,14 @@ export interface AnalysisWorkspaceProps {
 }
 
 export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation = null }: AnalysisWorkspaceProps) {
-  const [events, setEvents] = useState(INITIAL_ANALYSIS_EVENTS);
+  // ALPHA BUILD: the table starts empty instead of with the Mario vs. Pikachu sample events.
+  // To restore sample data, swap these back to:
+  //   useState(INITIAL_ANALYSIS_EVENTS)  and  useState<string | null>("evt-1")
+  // and use INITIAL_ANALYSIS_EVENTS in the saved-snapshot setup effect below.
+  const [events, setEvents] = useState<AnalysisEvent[]>(STARTING_EVENTS);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
   const [tablePreferences, setTablePreferences] = useState(DEFAULT_TABLE_PREFERENCES);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>("evt-1");
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(72);
@@ -226,7 +231,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [projectError, setProjectError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
-  const [isVideoMissing, setIsVideoMissing] = useState(false);
+  const [isVideoMissing, setIsVideoMissing] = useState(true);
   const [videoDuration, setVideoDuration] = useState(VIDEO_DURATION);
   const [seekRequest, setSeekRequest] = useState<SeekRequest>({ time: 0, id: 0 });
   // Start with what we can resolve right away, then let the desktop app upgrade it to a file on disk.
@@ -237,6 +242,8 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     void resolvePlaybackSourceAsync(replay).then((source) => { if (!cancelled) setPlaybackSource(source); });
     return () => { cancelled = true; };
   }, [replay]);
+  // Leaving the workspace frees any local video file held in memory.
+  useEffect(() => () => revokeAllLocalVideos(), []);
   /** Moves the playhead and tells the active media player to jump there. */
   const seekTo = (time: number) => {
     const clamped = Math.min(videoDuration, Math.max(0, time));
@@ -244,7 +251,6 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     setSeekRequest((request) => ({ time: clamped, id: request.id + 1 }));
   };
   const [isSaving, setIsSaving] = useState(false);
-  const unsavedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Histories live in refs so a pending text chunk can be committed and undone in one keystroke.
   const historyRef = useRef<UndoHistory>(EMPTY_UNDO_HISTORY);
@@ -257,8 +263,8 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const savedSnapshotRef = useRef<WorkspaceSnapshot>(createSnapshot(events, notes));
   const textEditBaselineRef = useRef<WorkspaceSnapshot | null>(null);
 
+  /** Single source of truth for the unsaved state: React state drives the UI, the parent gets notified. */
   const setUnsavedChangesPresent = (value: boolean) => {
-    unsavedRef.current = value;
     setUnsavedChangesState(value);
     onUnsavedChange?.(value);
   };
@@ -279,7 +285,8 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     setTablePreferences(readStoredTablePreferences());
     const storedNotes = window.localStorage.getItem(NOTES_KEY) ?? "";
     setNotes(storedNotes);
-    savedSnapshotRef.current = createSnapshot(INITIAL_ANALYSIS_EVENTS, storedNotes);
+    // ALPHA BUILD: original was createSnapshot(INITIAL_ANALYSIS_EVENTS, storedNotes)
+    savedSnapshotRef.current = createSnapshot(STARTING_EVENTS, storedNotes);
     setRecentProjects(loadRecentProjects());
   }, []);
 
@@ -287,8 +294,8 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   // so undo and redo move it back and forth automatically.
   useEffect(() => {
     const value = !snapshotsEqual({ events, notes }, savedSnapshotRef.current);
-    if (value !== unsavedRef.current) setUnsavedChangesPresent(value);
-  }, [events, notes]);
+    if (value !== unsavedChangesPresent) setUnsavedChangesPresent(value);
+  }, [events, notes, unsavedChangesPresent]);
 
   useEffect(() => {
     if (!notification) return;
@@ -300,7 +307,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   useEffect(() => {
     const pendingProject = takePendingProject();
     if (pendingProject) {
-      handleOpenResult(openStoredProject(pendingProject.filePath, pendingProject.id));
+      handleOpenResult(pendingProject);
       return;
     }
     const pendingReplay = takePendingReplay();
@@ -368,7 +375,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
 
   const autosaveRef = useRef<() => void>(() => undefined);
   autosaveRef.current = () => {
-    if (projectHandle && unsavedRef.current) void saveWorkspace("auto");
+    if (projectHandle && unsavedChangesPresent) void saveWorkspace("auto");
   };
   useEffect(() => {
     const timer = window.setInterval(() => autosaveRef.current(), AUTOSAVE_INTERVAL_MS);
@@ -404,7 +411,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   };
 
   const requestAction = (proceed: () => void, cancel?: () => void) => {
-    if (unsavedRef.current) setPendingAction({ proceed, ...(cancel ? { cancel } : {}) });
+    if (unsavedChangesPresent) setPendingAction({ proceed, ...(cancel ? { cancel } : {}) });
     else proceed();
   };
 
@@ -438,7 +445,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     if (hasNativeOpenPicker()) void openProjectWithPicker().then(handleOpenResult);
     else fileInputRef.current?.click();
   });
-  const openRecentProject = (project: RecentProject) => requestAction(() => handleOpenResult(openStoredProject(project.filePath, project.id)));
+  const openRecentProject = (project: RecentProject) => requestAction(() => void openStoredProject(project.filePath, project.id).then(handleOpenResult));
   const onProjectFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -940,7 +947,7 @@ const SHORTCUT_SECTIONS: ShortcutSection[] = [
   {
     title: "Workspace Panels",
     shortcuts: [
-      { description: "Toggle video controls", keys: ["Ctrl", "M"] },
+      { description: "Toggle video controls", keys: ["Ctrl", "Shift", "M"] },
       { description: "Toggle match notes", keys: ["Ctrl", ","] },
       { description: "Toggle filters", keys: ["Ctrl", "."] },
     ],
@@ -1087,7 +1094,7 @@ function IconTip({ label, onClick, children }: { label: string; onClick: () => v
 function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
   currentTime: number;
   duration: number;
-  /** Real replay stream; falls back to the sample still frame when absent. */
+  /** Only the imported replay is displayed; no sample still frame is used. */
   media: ReactNode | null;
   isPlaying: boolean;
   playbackRate: number;
@@ -1118,25 +1125,21 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
   };
   return (
     <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
-      {isVideoMissing ? (
+      {isVideoMissing || !media ? (
         <div role="status" className="flex aspect-video h-full max-w-full flex-col items-center justify-center gap-2 border border-dashed border-border bg-card/60 p-6 text-center">
           <VideoOff className="size-8 text-muted-foreground" aria-hidden />
           <p className="font-display text-lg font-semibold">No Video Found</p>
-          <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Missing file: {replay.videoPath || "not set"}</p>
+          {replay.videoPath && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Missing file: {replay.videoPath}</p>}
           {replay.originalUrl && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Original URL: {replay.originalUrl}</p>}
           <p className="text-xs text-muted-foreground">Events, tags, filters, and notes are still available for review.</p>
         </div>
       ) : (
         <>
-          {media ?? <img src={gameplayImage} alt="Replay frame showing two fighters on a tournament stage" width={1920} height={1080} className="block aspect-video h-full w-auto max-w-full object-contain" />}
+          {media}
           <button type="button" onClick={onPlayToggle} aria-label="Toggle playback from video" className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
           <div className="pointer-events-none absolute inset-0 bg-video-shade" />
         </>
       )}
-      <div className="absolute left-4 top-4 flex items-center gap-2">
-        <Badge className="bg-background/85 text-foreground shadow-none">GAME 3</Badge>
-        <Badge variant="outline" className="border-primary/40 bg-background/70 text-primary">Battlefield</Badge>
-      </div>
       {controlsVisible && <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 pt-12">
         <Slider aria-label="Video timeline" value={[currentTime]} min={0} max={duration} step={1} onValueChange={(value) => onSeek(value[0] ?? 0)} />
         <div className="mt-3 flex items-center gap-3">
@@ -1337,7 +1340,12 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
         </table>
         {events.length === 0 && (
           <div className="grid h-40 place-items-center text-center">
-            <div><ListFilter className="mx-auto mb-2 size-5 text-primary" /><p className="font-medium">No matching events</p><p className="mt-1 text-xs text-muted-foreground">Adjust or reset the filters to see more moments.</p></div>
+            {/* ALPHA BUILD: shows a "no events yet" message when the table is truly empty; original always said "No matching events". */}
+            {totalCount === 0 ? (
+              <div><ListFilter className="mx-auto mb-2 size-5 text-primary" /><p className="font-medium">No events logged yet</p><p className="mt-1 text-xs text-muted-foreground">Click "Add" above or press Ctrl+Enter to record a moment.</p></div>
+            ) : (
+              <div><ListFilter className="mx-auto mb-2 size-5 text-primary" /><p className="font-medium">No matching events</p><p className="mt-1 text-xs text-muted-foreground">Adjust or reset the filters to see more moments.</p></div>
+            )}
           </div>
         )}
       </div>

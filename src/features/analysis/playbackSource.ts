@@ -1,24 +1,28 @@
 import type { ProjectReplayInfo } from "./projectFile";
 import { getDesktopBridge } from "@/features/desktop/desktopBridge";
+import { extractYouTubeId } from "@/features/replay-import/youtubeUrl";
 
 /** A replay source the in-app player can actually stream. */
 export type PlaybackSource =
   | { kind: "youtube"; videoId: string }
   | { kind: "file"; url: string };
 
-const YOUTUBE_ID_PATTERN = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|live\/|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/;
+// YouTube link parsing lives in replay-import/youtubeUrl.ts (shared with
+// link validation and download file naming); re-exported for existing imports.
+export { extractYouTubeId };
 
 /** In-memory registry of local files picked this session (path → playable blob URL). */
 const localVideoUrls = new Map<string, string>();
 
-export function extractYouTubeId(url: string): string | null {
-  return url.match(YOUTUBE_ID_PATTERN)?.[1] ?? null;
+/** Releases every local video held in memory. */
+export function revokeAllLocalVideos(): void {
+  for (const url of localVideoUrls.values()) URL.revokeObjectURL(url);
+  localVideoUrls.clear();
 }
 
-/** Makes a locally picked file playable for the rest of the session. */
+/** Makes a locally picked file playable; only the newest file is kept in memory. */
 export function registerLocalVideo(videoPath: string, file: Blob): void {
-  const previous = localVideoUrls.get(videoPath);
-  if (previous) URL.revokeObjectURL(previous);
+  revokeAllLocalVideos();
   localVideoUrls.set(videoPath, URL.createObjectURL(file));
 }
 

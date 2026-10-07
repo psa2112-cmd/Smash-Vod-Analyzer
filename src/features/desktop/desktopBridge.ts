@@ -24,8 +24,8 @@ export interface DesktopBridge {
   onCloseRequested(handler: () => boolean): (() => void) | void;
   /** Actually close the window (used after the user confirms they want to leave). */
   confirmClose(): void;
-  /** Download (and optionally trim) a YouTube/Twitch video to disk, reporting progress 0–100. */
-  downloadVideo?(params: { url: string; clipRange: DownloadClipRange; onProgress: (percent: number) => void }): Promise<{ filePath: string }>;
+  /** Download (and optionally trim) a YouTube/Twitch video to disk, reporting progress 0–100. `fileName` is the suggested name inside the app's video folder. */
+  downloadVideo?(params: { url: string; clipRange: DownloadClipRange; onProgress: (percent: number) => void; fileName?: string }): Promise<{ filePath: string }>;
   /** Turn a file path on disk into a link the video player can play. */
   getVideoAssetUrl?(localPath: string): string | Promise<string>;
   /** Check whether a file still exists on disk. */

@@ -98,6 +98,8 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
   useEffect(() => {
     let isCancelled = false;
     let poll: number | undefined;
+    // Held right away so cleanup can destroy it even if YouTube hasn't finished starting.
+    let createdPlayer: YouTubePlayerInstance | null = null;
     const mount = document.createElement("div");
     hostRef.current?.appendChild(mount);
     loadYouTubeApi().then((yt) => {
@@ -109,6 +111,7 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
         playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, fs: 0, iv_load_policy: 3, start: Math.floor(latest.current.seekRequest.time) },
         events: {
           onReady: () => {
+            if (isCancelled) { player.destroy(); return; }
             const state = latest.current;
             player.setPlaybackRate(state.playbackRate);
             player.setVolume(state.volume);
@@ -129,6 +132,7 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
           },
         },
       });
+      createdPlayer = player;
     }).catch((error: unknown) => {
       console.error("[ReplayMediaPlayer] YouTube API load failed", error);
       latest.current.onError("The YouTube player couldn't load. Check your connection and try again.");
@@ -136,7 +140,8 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
     return () => {
       isCancelled = true;
       window.clearInterval(poll);
-      playerRef.current?.destroy();
+      try { createdPlayer?.destroy(); } catch (error) { console.warn("[ReplayMediaPlayer] destroy failed", error); }
+      createdPlayer = null;
       playerRef.current = null;
       mount.remove();
     };

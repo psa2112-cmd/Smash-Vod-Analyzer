@@ -1,3 +1,5 @@
+import { isYouTubeUrl } from "./youtubeUrl";
+
 export type ReplaySourceKind = "file" | "youtube" | "twitch";
 
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -5,21 +7,21 @@ export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: s
 export const MAX_VIDEO_FILE_BYTES = 4 * 1024 * 1024 * 1024; // 4 GB
 export const ACCEPTED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime", "video/x-matroska"] as const;
 
-const YOUTUBE_PATTERN = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com\/(watch\?v=|live\/|shorts\/)|youtu\.be\/)[\w-]{6,}/i;
+// YouTube link recognition is shared via youtubeUrl.ts; Twitch keeps its own pattern.
 const TWITCH_VOD_PATTERN = /^(https?:\/\/)?(www\.)?twitch\.tv\/videos\/\d+/i;
 
-function validateUrl(raw: string, pattern: RegExp, label: string, example: string): ValidationResult<string> {
+function validateUrl(raw: string, isValid: (url: string) => boolean, label: string, example: string): ValidationResult<string> {
   const trimmed = raw.trim();
   if (!trimmed) return { ok: false, error: `Paste a ${label} link.` };
-  if (!pattern.test(trimmed)) return { ok: false, error: `That doesn't look like a ${label} link. Try ${example}` };
+  if (!isValid(trimmed)) return { ok: false, error: `That doesn't look like a ${label} link. Try ${example}` };
   return { ok: true, value: trimmed };
 }
 
 export const validateYouTubeUrl = (raw: string) =>
-  validateUrl(raw, YOUTUBE_PATTERN, "YouTube", "youtube.com/watch?v=…");
+  validateUrl(raw, isYouTubeUrl, "YouTube", "youtube.com/watch?v=…");
 
 export const validateTwitchVodUrl = (raw: string) =>
-  validateUrl(raw, TWITCH_VOD_PATTERN, "Twitch VOD", "twitch.tv/videos/…");
+  validateUrl(raw, (url) => TWITCH_VOD_PATTERN.test(url), "Twitch VOD", "twitch.tv/videos/…");
 
 export function validateVideoFile(file: File): ValidationResult<File> {
   if (!file.type.startsWith("video/")) return { ok: false, error: "Please choose a video file (MP4, WebM, MOV or MKV)." };
@@ -46,7 +48,7 @@ export interface ClipRange {
 
 export function detectLinkPlatform(raw: string): LinkPlatform | null {
   const trimmed = raw.trim();
-  if (YOUTUBE_PATTERN.test(trimmed)) return "youtube";
+  if (isYouTubeUrl(trimmed)) return "youtube";
   if (TWITCH_VOD_PATTERN.test(trimmed)) return "twitch";
   return null;
 }

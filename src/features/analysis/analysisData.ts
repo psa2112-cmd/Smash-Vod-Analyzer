@@ -107,6 +107,8 @@ export const STARTER_TAGS = [
   "Neutral",
   "Advantage",
   "Disadvantage",
+  "Successful",
+  "Unsuccessful",
 ];
 
 export const INITIAL_ANALYSIS_EVENTS: AnalysisEvent[] = [

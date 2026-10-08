@@ -578,7 +578,6 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     if (event.ctrlKey) {
       const ctrlActions: Record<string, () => void> = {
         m: () => setControlsVisible((visible) => !visible),
-        ",": () => togglePanel("notes"),
         ".": () => togglePanel("filters"),
       };
       const action = ctrlActions[key];
@@ -706,17 +705,18 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     setAndSaveTablePreferences({ ...tablePreferences, sorts: cycleSortRules(tablePreferences.sorts, key, additive) });
   };
 
-  const addManualEvent = () => {
-    const previousTimestamp = [...events].sort((left, right) => right.timestamp - left.timestamp).find((event) => event.timestamp <= currentTime)?.timestamp;
+  const addManualEvent = (customTimestamp?: number) => {
+    const targetTime = customTimestamp ?? Math.floor(currentTime);
+    const previousTimestamp = [...events].sort((left, right) => right.timestamp - left.timestamp).find((event) => event.timestamp <= targetTime)?.timestamp;
     const event: AnalysisEvent = {
       id: `manual-${Date.now()}`,
       eventType: manualEventType,
       character: null,
-      timestamp: Math.floor(currentTime),
+      timestamp: targetTime,
       damage: null,
       tags: manualTags,
       note: manualNote.trim(),
-      secondsSincePrevious: previousTimestamp === undefined ? null : Math.max(0, Math.floor(currentTime - previousTimestamp)),
+      secondsSincePrevious: previousTimestamp === undefined ? null : Math.max(0, Math.floor(targetTime - previousTimestamp)),
     };
     recordUndoState();
     setEvents((current) => [...current, event]);
@@ -753,7 +753,6 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
           onBack={analyzeNewReplay}
           onOpenShortcuts={() => setIsShortcutsOpen(true)}
           onAddEvent={() => setIsManualEventOpen(true)}
-          onToggleNotes={() => togglePanel("notes")}
           onToggleFilters={() => togglePanel("filters")}
           controlsVisible={controlsVisible}
           onToggleControls={() => setControlsVisible((visible) => !visible)}
@@ -846,7 +845,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
               <ResizableHandle aria-label="Resize event table and lower panels" className={VERTICAL_HANDLE_CLASS}><span aria-hidden className="h-1 w-12 rounded-full bg-muted-foreground/50 group-hover:bg-primary-foreground/70" /></ResizableHandle>
               <ResizablePanel id="utilities" minSize={180}>
                 <div className="h-full min-h-0 border-t border-border">
-                  {layout.notesVisible && layout.filtersVisible ? (
+                  {layout.filtersVisible ? (
                     <ResizablePanelGroup
                       key={`lower-${JSON.stringify(layout.lower)}-${layout.isSwapped}`}
                       orientation="horizontal"
@@ -869,10 +868,8 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
                         )}
                       </ResizablePanel>
                     </ResizablePanelGroup>
-                  ) : layout.notesVisible ? (
-                    <NotesPanel notes={notes} onChange={changeNotes} onCommit={commitNotesEdit} textareaRef={matchNotesRef} />
                   ) : (
-                    <FilterPanel filters={filters} events={events} onChange={setFilters} />
+                    <NotesPanel notes={notes} onChange={changeNotes} onCommit={commitNotesEdit} textareaRef={matchNotesRef} />
                   )}
                 </div>
               </ResizablePanel>
@@ -984,7 +981,6 @@ const SHORTCUT_SECTIONS: ShortcutSection[] = [
     title: "Workspace Panels",
     shortcuts: [
       { description: "Toggle video controls", keys: ["Ctrl", "Shift", "M"] },
-      { description: "Toggle match notes", keys: ["Ctrl", ","] },
       { description: "Toggle filters", keys: ["Ctrl", "."] },
     ],
   },
@@ -1056,7 +1052,7 @@ function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   );
 }
 
-function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedChangesPresent, notification, fileMenu, onBack, onOpenShortcuts, onAddEvent, onToggleNotes, onToggleFilters, onToggleControls, onSwap, onReset }: {
+function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedChangesPresent, notification, fileMenu, onBack, onOpenShortcuts, onAddEvent, onToggleFilters, onToggleControls, onSwap, onReset }: {
   eventCount: number;
   layout: WorkspaceLayout;
   controlsVisible: boolean;
@@ -1067,7 +1063,6 @@ function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedCh
   onBack: () => void;
   onOpenShortcuts: () => void;
   onAddEvent: () => void;
-  onToggleNotes: () => void;
   onToggleFilters: () => void;
   onToggleControls: () => void;
   onSwap: () => void;
@@ -1102,9 +1097,6 @@ function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedCh
         <div className="mx-2 h-6 w-px bg-border" />
         <IconTip label={controlsVisible ? "Hide video controls" : "Show video controls"} onClick={onToggleControls}>
           {controlsVisible ? <EyeOff /> : <Eye />}
-        </IconTip>
-        <IconTip label={layout.notesVisible ? "Hide match notes" : "Show match notes"} onClick={onToggleNotes}>
-          {layout.notesVisible ? <EyeOff /> : <Eye />}
         </IconTip>
         <IconTip label={layout.filtersVisible ? "Hide filters" : "Show filters"} onClick={onToggleFilters}>
           <Filter />
@@ -1369,10 +1361,11 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <datalist id="character-suggestions">{CHARACTER_SUGGESTIONS.map((name) => <option key={name} value={name} />)}</datalist>
-        <table className="table-fixed text-xs" style={{ width: tableWidth }}>
+        <table className="min-w-full table-fixed text-xs" style={{ width: tableWidth }}>
           <colgroup>
             {visibleColumns.map((column) => <col key={column.id} style={{ width: tablePreferences.widths[column.id] }} />)}
             <col className="w-12" />
+            <col />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-card text-muted-foreground">
             <tr className="border-b border-border">
@@ -1393,6 +1386,7 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
                 />
               ))}
               <th className="w-12"><span className="sr-only">Actions</span></th>
+              <th aria-hidden className="p-0" />
             </tr>
           </thead>
           <tbody>
@@ -1600,6 +1594,7 @@ function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBegi
         );
       })}
       <td className="pr-2"><Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive" onClick={onDelete} aria-label={`Delete event at ${formatTimestamp(event.timestamp)}`}><Trash2 /></Button></td>
+      <td aria-hidden className="p-0" />
     </tr>
   );
 }
@@ -1715,8 +1710,14 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
   onEventTypeChange: (eventType: AnalysisEventType) => void;
   onNoteChange: (note: string) => void;
   onTagsChange: (tags: string[]) => void;
-  onSave: () => void;
+  onSave: (timestamp: number) => void;
 }) {
+  const [draftTimestamp, setDraftTimestamp] = useState(() => formatTimestamp(timestamp));
+  useEffect(() => {
+    if (open) setDraftTimestamp(formatTimestamp(timestamp));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const handleSave = () => onSave(parseTimestampInput(draftTimestamp) ?? Math.floor(timestamp));
   const eventTypeRef = useRef<HTMLButtonElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const tagRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -1741,11 +1742,11 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-card max-w-xl" onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter" && (keyEvent.ctrlKey || keyEvent.metaKey)) { keyEvent.preventDefault(); onSave(); } }}>
+      <DialogContent className="border-border bg-card max-w-xl" onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter" && (keyEvent.ctrlKey || keyEvent.metaKey)) { keyEvent.preventDefault(); handleSave(); } }}>
         <DialogHeader><DialogTitle>Add manual event</DialogTitle><DialogDescription>Capture a meaningful moment at the current playhead.</DialogDescription></DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-[120px_1fr] gap-3">
-            <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={formatTimestamp(timestamp)} disabled className="mt-1 font-mono" /></label>
+            <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={draftTimestamp} onChange={(changeEvent) => setDraftTimestamp(changeEvent.target.value)} placeholder={formatTimestamp(timestamp)} aria-label="Event timestamp" className="mt-1 font-mono" /></label>
             <div className="text-xs font-medium text-muted-foreground"><span id="manual-event-type-label">Event type</span><EventTypeListbox triggerRef={eventTypeRef} value={eventType} onChange={onEventTypeChange} onArrowDownWhenClosed={() => focusTag(0)} /></div>
           </div>
            <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag, index) => <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => toggleTag(index)}>{tag}</Button>)}</div></fieldset>

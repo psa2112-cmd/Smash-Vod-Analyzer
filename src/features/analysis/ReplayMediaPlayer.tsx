@@ -92,6 +92,7 @@ const YT_ENDED = 0;
 function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, onTimeUpdate, onDurationChange, onEnded, onError }: ReplayMediaPlayerProps & { videoId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YouTubePlayerInstance | null>(null);
+  const pendingSeekRef = useRef<{ targetTime: number; expiresAt: number } | null>(null);
   const latest = useRef({ isPlaying, playbackRate, volume, seekRequest, onTimeUpdate, onDurationChange, onEnded, onError });
   latest.current = { isPlaying, playbackRate, volume, seekRequest, onTimeUpdate, onDurationChange, onEnded, onError };
 
@@ -120,7 +121,17 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
             playerRef.current = player;
             state.onDurationChange(player.getDuration());
             poll = window.setInterval(() => {
-              latest.current.onTimeUpdate(player.getCurrentTime());
+              const currentTime = player.getCurrentTime();
+              const pending = pendingSeekRef.current;
+              if (pending) {
+                // Skip stale pre-seek times while YouTube buffers the new position.
+                if (Math.abs(currentTime - pending.targetTime) <= 0.5 || Date.now() > pending.expiresAt) {
+                  pendingSeekRef.current = null;
+                  latest.current.onTimeUpdate(currentTime);
+                }
+              } else {
+                latest.current.onTimeUpdate(currentTime);
+              }
               const duration = player.getDuration();
               if (duration > 0) latest.current.onDurationChange(duration);
             }, 250);
@@ -150,7 +161,11 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
   useEffect(() => { const p = playerRef.current; if (!p) return; if (isPlaying) p.playVideo(); else p.pauseVideo(); }, [isPlaying]);
   useEffect(() => { playerRef.current?.setPlaybackRate(playbackRate); }, [playbackRate]);
   useEffect(() => { playerRef.current?.setVolume(volume); }, [volume]);
-  useEffect(() => { playerRef.current?.seekTo(seekRequest.time, true); }, [seekRequest]);
+  useEffect(() => {
+    if (!playerRef.current) return;
+    pendingSeekRef.current = { targetTime: seekRequest.time, expiresAt: Date.now() + 800 };
+    playerRef.current.seekTo(seekRequest.time, true);
+  }, [seekRequest]);
 
   return <div ref={hostRef} aria-label="YouTube replay video" className={`${MEDIA_CLASS} pointer-events-none [&>iframe]:h-full [&>iframe]:w-full`} />;
 }

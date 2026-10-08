@@ -81,9 +81,9 @@ describe("recently opened registry", () => {
   });
 });
 
-describe("redownloadVideo stub", () => {
-  it("returns false", async () => {
-    await expect(redownloadVideo("https://youtu.be/abc")).resolves.toBe(false);
+describe("redownloadVideo", () => {
+  it("returns null outside the desktop app", async () => {
+    await expect(redownloadVideo("https://youtu.be/abc")).resolves.toBeNull();
   });
 });
 
@@ -102,7 +102,7 @@ describe("clip range", () => {
     expect(parseProjectFile(JSON.stringify(damaged)).ok).toBe(false);
   });
 
-  it("passes the clip range to the redownload stub", async () => {
-    await expect(redownloadVideo("https://youtu.be/abc", { isFullVideo: true })).resolves.toBe(false);
+  it("accepts a clip range when redownloading", async () => {
+    await expect(redownloadVideo("https://youtu.be/abc", { isFullVideo: true })).resolves.toBeNull();
   });
 });

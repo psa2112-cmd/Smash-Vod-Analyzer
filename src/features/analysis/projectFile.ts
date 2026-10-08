@@ -160,9 +160,28 @@ export function saveRecentProjects(list: RecentProject[]): void {
 }
 
 /**
- * TO DO: create functionality for downloading videos.
+ * Downloads a project's replay again from its original link (desktop app only).
+ * Returns the new file path on disk, or null when downloading isn't possible
+ * (browser preview) or the download failed.
  */
-export async function redownloadVideo(url: string, clipRange?: ProjectClipRange): Promise<boolean> {
-  console.info("[projectFile] redownloadVideo stub called", { url, clipRange });
-  return false;
+export async function redownloadVideo(
+  url: string,
+  clipRange?: ProjectClipRange,
+  onProgress: (percent: number) => void = () => undefined,
+): Promise<string | null> {
+  // Loaded lazily: storageAdapter imports this file, so a static import would be circular.
+  const { canDownloadVideos, downloadReplayVideo } = await import("./storageAdapter");
+  if (!canDownloadVideos()) {
+    console.info("[projectFile] redownloadVideo skipped: downloads need the desktop app", { url });
+    return null;
+  }
+  try {
+    console.info("[projectFile] redownloadVideo start", { url, clipRange });
+    const filePath = await downloadReplayVideo(url, clipRange ?? { isFullVideo: true }, onProgress);
+    console.info("[projectFile] redownloadVideo complete", { filePath });
+    return filePath;
+  } catch (error) {
+    console.error("[projectFile] redownloadVideo failed", error);
+    return null;
+  }
 }

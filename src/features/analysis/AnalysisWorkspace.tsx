@@ -9,6 +9,7 @@ import {
   EyeOff,
   FilePlus,
   Filter,
+  Download,
   FolderOpen,
   GripVertical,
   History,
@@ -32,7 +33,8 @@ import {
 import { formatTimestampInput, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions } from "./inlineEditing";
 import type { ReactNode } from "react";
 import { ReplayMediaPlayer, type SeekRequest } from "./ReplayMediaPlayer";
-import { resolvePlaybackSource, resolvePlaybackSourceAsync, revokeAllLocalVideos } from "./playbackSource";
+import { registerLocalVideo, resolvePlaybackSource, resolvePlaybackSourceAsync, revokeAllLocalVideos } from "./playbackSource";
+import { canDownloadVideos } from "./storageAdapter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -330,12 +332,42 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     setVideoDuration(VIDEO_DURATION);
     if (playbackSource) { setIsVideoMissing(false); return; }
     void (async () => {
+      // Re-downloading is now a user choice on the "No Video Found" card, never automatic.
       const isAvailable = await isVideoAvailable(replay.videoPath);
-      const isRecovered = isAvailable || (replay.originalUrl ? await redownloadVideo(replay.originalUrl, replay.clipRange) : false);
-      if (!isCancelled) setIsVideoMissing(!isRecovered);
+      if (!isCancelled) setIsVideoMissing(!isAvailable);
     })();
     return () => { isCancelled = true; };
   }, [replay, playbackSource]);
+
+  const [redownloadProgress, setRedownloadProgress] = useState<number | null>(null);
+  const isRedownloading = redownloadProgress !== null;
+
+  /** Points the project at a video file the user picked (e.g. after moving or renaming it). */
+  const handleRelinkVideo = (file: File) => {
+    registerLocalVideo(file.name, file);
+    setReplay((previous) => ({ ...previous, videoPath: file.name }));
+    setProjectError(null);
+    setNotification("Video file re-linked");
+  };
+
+  /** Downloads the replay again from its original link (desktop app only). */
+  const handleRedownload = async () => {
+    if (!replay.originalUrl || isRedownloading) return;
+    setRedownloadProgress(0);
+    try {
+      const downloadedPath = await redownloadVideo(replay.originalUrl, replay.clipRange, setRedownloadProgress);
+      if (downloadedPath) {
+        setReplay((previous) => ({ ...previous, videoPath: downloadedPath }));
+        setProjectError(null);
+        setNotification("Video re-downloaded");
+      } else {
+        setProjectError("The video could not be re-downloaded. Check your internet connection and try again.");
+      }
+    } finally {
+      setRedownloadProgress(null);
+    }
+  };
+
 
   const rememberRecentProject = (handle: ProjectHandle) => {
     const next = addRecentProject(loadRecentProjects(), { ...handle, lastOpenedDate: new Date().toISOString() });
@@ -768,6 +800,10 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
               volume={volume}
               replay={replay}
               isVideoMissing={isVideoMissing}
+              redownloadProgress={redownloadProgress}
+              canRedownload={canDownloadVideos()}
+              onRelinkVideo={handleRelinkVideo}
+              onRedownload={() => void handleRedownload()}
               onPlayToggle={() => setIsPlaying((playing) => !playing)}
               onSeek={seekTo}
               onVolumeChange={setVolume}
@@ -1091,7 +1127,7 @@ function IconTip({ label, onClick, children }: { label: string; onClick: () => v
   );
 }
 
-function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
+function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, redownloadProgress, canRedownload, onRelinkVideo, onRedownload, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
   currentTime: number;
   duration: number;
   /** Only the imported replay is displayed; no sample still frame is used. */
@@ -1102,6 +1138,11 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
   controlsVisible: boolean;
   replay: ProjectReplayInfo;
   isVideoMissing: boolean;
+  /** Percent while a re-download runs, otherwise null. */
+  redownloadProgress: number | null;
+  canRedownload: boolean;
+  onRelinkVideo: (file: File) => void;
+  onRedownload: () => void;
   onPlayToggle: () => void;
   onSeek: (value: number) => void;
   onVolumeChange: (value: number) => void;
@@ -1109,6 +1150,7 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
 }) {
   const rates = [0.5, 0.75, 1, 1.25, 1.5];
   const playerRef = useRef<HTMLElement>(null);
+  const relinkInputRef = useRef<HTMLInputElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
     const syncFullscreen = () => setIsFullscreen(document.fullscreenElement === playerRef.current);
@@ -1132,6 +1174,38 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
           {replay.videoPath && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Missing file: {replay.videoPath}</p>}
           {replay.originalUrl && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Original URL: {replay.originalUrl}</p>}
           <p className="text-xs text-muted-foreground">Events, tags, filters, and notes are still available for review.</p>
+          <input
+            ref={relinkInputRef}
+            type="file"
+            accept="video/*"
+            className="hidden"
+            aria-hidden
+            tabIndex={-1}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onRelinkVideo(file);
+              event.target.value = "";
+            }}
+          />
+          {redownloadProgress !== null ? (
+            <div className="mt-2 w-64 space-y-1" role="progressbar" aria-label="Re-downloading video" aria-valuemin={0} aria-valuemax={100} aria-valuenow={redownloadProgress}>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full bg-primary transition-all" style={{ width: `${redownloadProgress}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground">Re-downloading… {redownloadProgress}%</p>
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-wrap justify-center gap-2">
+              <Button type="button" size="sm" variant="secondary" onClick={() => relinkInputRef.current?.click()}>
+                <FolderOpen className="size-4" aria-hidden /> Re-link Video File
+              </Button>
+              {replay.originalUrl && canRedownload && (
+                <Button type="button" size="sm" onClick={onRedownload}>
+                  <Download className="size-4" aria-hidden /> Re-download Video
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <>

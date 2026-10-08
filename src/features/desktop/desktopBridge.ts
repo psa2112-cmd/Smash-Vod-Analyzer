@@ -45,8 +45,23 @@ declare global { interface Window { desktopBridge?: DesktopBridge } }
 /** Returns the desktop bridge if we're in the desktop app, otherwise null. */
 export function getDesktopBridge(): DesktopBridge | null {
   if (typeof window === "undefined") return null;
-  return window.desktopBridge ?? null;
+  if (window.desktopBridge) return window.desktopBridge;
+
+  // Fallback: inside Tauri, but bridge.js hasn't been injected yet. Return a
+  // minimal stub so the app still knows it's on desktop and can close the window.
+  const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
+  if (tauri) {
+    return {
+      isDesktop: true,
+      onCloseRequested: () => undefined,
+      confirmClose: () => { void tauri.window?.getCurrentWindow?.().destroy?.(); },
+    };
+  }
+  return null;
 }
+
+/** The small slice of Tauri's global API the fallback stub relies on. */
+interface TauriGlobal { window?: { getCurrentWindow?: () => { destroy?: () => Promise<void> | void } } }
 
 /** True only inside the desktop app. */
 export function isDesktopEnvironment(): boolean {

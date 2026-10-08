@@ -10,7 +10,8 @@
 use regex::Regex;
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::webview::PageLoadEvent;
+use tauri::{Emitter, WindowEvent};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -63,7 +64,7 @@ async fn download_video(
 
     let sidecar = app
         .shell()
-        .sidecar("yt-dlp")
+        .sidecar("binaries/yt-dlp")
         .map_err(|e| format!("yt-dlp sidecar unavailable: {e}"))?
         .args(args);
 
@@ -135,12 +136,12 @@ pub fn run() {
             read_text_file,
             write_text_file,
         ])
-        .setup(|app| {
-            // Inject the frontend bridge (window.desktopBridge) before any page loads.
-            let bridge_js = include_str!("../bridge.js");
-            let window = app.get_webview_window("main").unwrap();
-            window.eval(bridge_js).ok();
-            Ok(())
+        // Inject the frontend bridge (window.desktopBridge) on every page load,
+        // including refreshes and navigations, so it never goes missing.
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                webview.eval(include_str!("../bridge.js")).ok();
+            }
         })
         .on_window_event(|window, event| {
             // Intercept OS close requests: ask the frontend first. The frontend

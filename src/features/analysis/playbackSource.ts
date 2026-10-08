@@ -45,7 +45,9 @@ export async function resolvePlaybackSourceAsync(replay: Pick<ProjectReplayInfo,
   const bridge = getDesktopBridge();
   if (bridge?.getVideoAssetUrl && isLocalFilePath(replay.videoPath) && !localVideoUrls.has(replay.videoPath)) {
     try {
-      return { kind: "file", url: await bridge.getVideoAssetUrl(replay.videoPath) };
+      // A missing file on disk falls through to the YouTube stream (if the replay has one).
+      const exists = bridge.fileExists ? await bridge.fileExists(replay.videoPath) : true;
+      if (exists) return { kind: "file", url: await bridge.getVideoAssetUrl(replay.videoPath) };
     } catch (error) {
       console.warn("[playbackSource] desktop could not provide the video; trying other sources", error);
     }

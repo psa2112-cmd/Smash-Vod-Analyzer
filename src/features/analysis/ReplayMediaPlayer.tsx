@@ -109,7 +109,7 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
         videoId,
         width: "100%",
         height: "100%",
-        playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, fs: 0, iv_load_policy: 3, start: Math.floor(latest.current.seekRequest.time) },
+        playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, fs: 0, iv_load_policy: 3, cc_load_policy: 0, origin: window.location.origin, start: Math.floor(latest.current.seekRequest.time) },
         events: {
           onReady: () => {
             if (isCancelled) { player.destroy(); return; }

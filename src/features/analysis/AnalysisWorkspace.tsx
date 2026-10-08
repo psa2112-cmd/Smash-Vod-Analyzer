@@ -1215,25 +1215,25 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
         </>
       )}
       </div>
-      {controlsVisible && <div className="w-full shrink-0 border-t border-border/40 bg-background/95 px-5 py-3">
-        <Slider aria-label="Video timeline" value={[currentTime]} min={0} max={duration} step={1} onValueChange={(value) => onSeek(value[0] ?? 0)} />
-        <div className="mt-3 flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={onPlayToggle} aria-label={isPlaying ? "Pause replay" : "Play replay"} className="bg-background/55 hover:bg-background/80">
+      {controlsVisible && <div className="w-full shrink-0 border-t border-border/40 bg-background/95 px-4 py-1.5">
+        <Slider aria-label="Video timeline" className="[&_[role=slider]]:h-3 [&_[role=slider]]:w-3" value={[currentTime]} min={0} max={duration} step={1} onValueChange={(value) => onSeek(value[0] ?? 0)} />
+        <div className="mt-1 flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={onPlayToggle} aria-label={isPlaying ? "Pause replay" : "Play replay"} className="h-6 w-6 bg-background/55 hover:bg-background/80 [&_svg]:size-3.5">
             {isPlaying ? <Pause /> : <Play />}
           </Button>
           <span data-testid="playhead-time" className="w-24 font-mono text-xs">{formatTimestamp(Math.floor(currentTime))} / {formatTimestamp(Math.floor(duration))}</span>
           <Volume2 className="size-4 text-muted-foreground" aria-hidden />
-          <Slider aria-label="Volume" className="w-24" value={[volume]} min={0} max={100} onValueChange={(value) => onVolumeChange(value[0] ?? 0)} />
+          <Slider aria-label="Volume" className="w-24 [&_[role=slider]]:h-3 [&_[role=slider]]:w-3" value={[volume]} min={0} max={100} onValueChange={(value) => onVolumeChange(value[0] ?? 0)} />
           <div className="ml-auto flex items-center gap-1">
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Playback speed" className="font-mono text-xs">{playbackRate}×</Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="Playback speed" className="h-6 px-2 font-mono text-xs">{playbackRate}×</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuRadioGroup value={String(playbackRate)} onValueChange={(value) => onPlaybackRateChange(Number(value))}>
                   {rates.map((rate) => <DropdownMenuRadioItem key={rate} value={String(rate)}>{rate}×</DropdownMenuRadioItem>)}
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button variant="ghost" size="icon" onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit fullscreen preview" : "Fullscreen preview"}>{isFullscreen ? <Minimize2 /> : <Maximize2 />}</Button>
+            <Button variant="ghost" size="icon" onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit fullscreen preview" : "Fullscreen preview"} className="h-6 w-6 [&_svg]:size-3.5">{isFullscreen ? <Minimize2 /> : <Maximize2 />}</Button>
           </div>
         </div>
       </div>}

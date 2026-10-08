@@ -123,7 +123,7 @@ function SiteHeader() {
     <header className="border-b border-border bg-background">
       <nav
         aria-label="Main"
-        className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4"
+        className="flex h-14 w-full items-center justify-between gap-4 px-4 sm:px-6"
       >
         <Link to="/" className="font-display text-sm font-bold uppercase tracking-[0.2em]">
           Replay <span className="text-primary">Analyzer</span>

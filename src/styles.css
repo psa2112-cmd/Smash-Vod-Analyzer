@@ -118,9 +118,6 @@
     repeating-linear-gradient(0deg, oklch(1 0 0 / 2.5%) 0 1px, transparent 1px 4px);
 }
 
-@utility bg-video-shade {
-  background: linear-gradient(to bottom, transparent 40%, oklch(0.08 0.01 270 / 92%) 100%);
-}
 
 @utility bg-video-letterbox {
   background: linear-gradient(90deg, var(--background), var(--card) 18%, var(--card) 82%, var(--background));

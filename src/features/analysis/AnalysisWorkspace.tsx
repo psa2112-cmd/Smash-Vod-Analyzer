@@ -1166,7 +1166,8 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
     }
   };
   return (
-    <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
+    <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 flex-col items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
+      <div className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden">
       {isVideoMissing || !media ? (
         <div role="status" className="flex aspect-video h-full max-w-full flex-col items-center justify-center gap-2 border border-dashed border-border bg-card/60 p-6 text-center">
           <VideoOff className="size-8 text-muted-foreground" aria-hidden />
@@ -1211,10 +1212,10 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
         <>
           {media}
           <button type="button" onClick={onPlayToggle} aria-label="Toggle playback from video" className="absolute inset-0 cursor-pointer focus-visible:outline-none" />
-          <div className="pointer-events-none absolute inset-0 bg-video-shade" />
         </>
       )}
-      {controlsVisible && <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 pt-12">
+      </div>
+      {controlsVisible && <div className="w-full shrink-0 border-t border-border/40 bg-background/95 px-5 py-3">
         <Slider aria-label="Video timeline" value={[currentTime]} min={0} max={duration} step={1} onValueChange={(value) => onSeek(value[0] ?? 0)} />
         <div className="mt-3 flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={onPlayToggle} aria-label={isPlaying ? "Pause replay" : "Play replay"} className="bg-background/55 hover:bg-background/80">

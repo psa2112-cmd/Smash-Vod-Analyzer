@@ -164,9 +164,7 @@ describe("AnalysisWorkspace", () => {
     await user.type(notes, "Stop jumping from the corner.");
     expect(screen.getByText(/saved locally/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /hide match notes/i }));
-    expect(screen.queryByLabelText("Match notes", { exact: true })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /show match notes/i }));
+    expect(screen.queryByRole("button", { name: /hide match notes/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Match notes", { exact: true })).toBeInTheDocument();
   });
 

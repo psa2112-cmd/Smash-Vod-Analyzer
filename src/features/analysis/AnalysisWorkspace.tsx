@@ -1752,7 +1752,7 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
            <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag, index) => <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => toggleTag(index)}>{tag}</Button>)}</div></fieldset>
           <label className="text-xs font-medium text-muted-foreground">Event note<Textarea ref={noteRef} aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} onKeyDown={(keyEvent) => { const target = keyEvent.currentTarget; if (keyEvent.key === "ArrowUp" && target.selectionStart === 0 && target.selectionEnd === 0) { keyEvent.preventDefault(); focusTag(STARTER_TAGS.length - 1); } }} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={onSave} title="Ctrl+Enter / Cmd+Enter">Save event</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={handleSave} title="Ctrl+Enter / Cmd+Enter">Save event</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

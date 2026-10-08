@@ -120,7 +120,7 @@ function SiteHeader() {
     "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-background/85 backdrop-blur">
+    <header className="border-b border-border bg-background">
       <nav
         aria-label="Main"
         className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4"

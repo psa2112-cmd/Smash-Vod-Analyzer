@@ -181,7 +181,7 @@ const VERTICAL_HANDLE_CLASS = "group h-2 w-full cursor-row-resize bg-border/40 t
 // A workspace without an imported replay must not pretend a sample video exists.
 const DEFAULT_REPLAY: ProjectReplayInfo = { videoPath: "", title: "Untitled Review" };
 /** ALPHA BUILD: events the table starts with. Set to INITIAL_ANALYSIS_EVENTS to bring back sample data. */
-const STARTING_EVENTS: AnalysisEvent[] = [];
+const STARTING_EVENTS: AnalysisEvent[] = INITIAL_ANALYSIS_EVENTS;
 
 export interface BlockedNavigation { proceed: () => void; cancel: () => void }
 interface PendingAction { proceed: () => void; cancel?: () => void }
@@ -200,7 +200,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [events, setEvents] = useState<AnalysisEvent[]>(STARTING_EVENTS);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
   const [tablePreferences, setTablePreferences] = useState(DEFAULT_TABLE_PREFERENCES);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>("evt-1");
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(72);

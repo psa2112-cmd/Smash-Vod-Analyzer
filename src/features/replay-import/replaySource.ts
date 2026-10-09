@@ -1,5 +1,6 @@
 import { isYouTubeUrl } from "./youtubeUrl";
-import { formatTimestampString, parseTimestampInput } from "@/features/analysis/inlineEditing";
+import { parseTimestampInput } from "@/features/analysis/inlineEditing";
+export { formatTimestampInput } from "@/features/analysis/inlineEditing";
 
 export type ReplaySourceKind = "file" | "youtube" | "twitch";
 
@@ -54,11 +55,6 @@ export function detectLinkPlatform(raw: string): LinkPlatform | null {
   return null;
 }
 
-/** Tidies a typed time using the app-wide rule (digits read right to left). Empty stays empty. */
-export function formatTimestampInput(raw: string): string {
-  return raw.trim() === "" ? "" : formatTimestampString(raw);
-}
-
 export function digitsBefore(text: string, pos: number): number {
   return text.slice(0, pos).replace(/\D/g, "").length;
 }
@@ -74,7 +70,7 @@ export function caretForDigitCount(formatted: string, count: number): number {
 }
 
 /** Allowed characters while typing a time: digits and colons only. */
-export const DOWNLOAD_TIME_PATTERN = /^[\d:]+$/;
+const DOWNLOAD_TIME_PATTERN = /^[\d:]+$/;
 
 /** Reads a typed time ("123", "1:23", "1:02:03") into seconds; null when nothing usable was typed. */
 export function parseClipTimestamp(raw: string): number | null {

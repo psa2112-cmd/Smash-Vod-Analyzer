@@ -21,6 +21,11 @@ export function formatTimestampString(input: string): string {
   return formatTimestamp(readTimestampDigits(input) ?? 0);
 }
 
+/** Tidies a typed time using digits read right to left. Returns empty string when input is empty. */
+export function formatTimestampInput(raw: string): string {
+  return raw.trim() === "" ? "" : formatTimestampString(raw);
+}
+
 /** Converts any typed time (with or without colons) into total seconds; null when nothing was typed. */
 export function parseTimestampInput(value: string): number | null {
   return readTimestampDigits(value);

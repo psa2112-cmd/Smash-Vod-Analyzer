@@ -24,7 +24,7 @@ const DIALOG_FILTERS = [{ name: "Replay analysis project", extensions: [PROJECT_
 const nativeHandles = new Map<string, NativeFileHandle>();
 
 const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "replay";
-export const createProjectId = () => `proj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const createProjectId = () => `proj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const nameFromPath = (path: string) => path.split(/[\\/]/).pop()?.replace(PROJECT_FILE_EXTENSION, "") ?? path;
 
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
@@ -145,7 +145,7 @@ export async function openProjectWithPicker(): Promise<OpenProjectResult | null>
   }
 }
 
-export const RECENT_UNAVAILABLE_IN_BROWSER = "Web browsers cannot silently open files from your hard drive. Please use \"Open from disk\" to select your file.";
+const RECENT_UNAVAILABLE_IN_BROWSER = "Web browsers cannot silently open files from your hard drive. Please use \"Open from disk\" to select your file.";
 
 /** Reopens a recent project. Only the desktop app can read a file by its path; browsers must use the file picker. */
 export async function openStoredProject(filePath: string, id: string): Promise<OpenProjectResult> {

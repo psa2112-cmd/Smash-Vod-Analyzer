@@ -9,11 +9,10 @@ import type { ClipRange } from "@/features/replay-import/replaySource";
 
 export const PROJECT_SCHEMA_VERSION = "1.0.0";
 export const PROJECT_FILE_EXTENSION = ".vodproject";
-export const RECENT_PROJECTS_KEY = "smash-replay-recent-projects";
-export const MAX_RECENT_PROJECTS = 5;
+const RECENT_PROJECTS_KEY = "smash-replay-recent-projects";
+const MAX_RECENT_PROJECTS = 5;
 
-export type ProjectClipRange = ClipRange;
-export interface ProjectReplayInfo { videoPath: string; title: string; originalUrl?: string; clipRange?: ProjectClipRange }
+export interface ProjectReplayInfo { videoPath: string; title: string; originalUrl?: string; clipRange?: ClipRange }
 export interface ProjectSessionState { currentTimestamp: number; selectedRowId: string | null }
 export interface ProjectTableState {
   events: AnalysisEvent[];
@@ -73,7 +72,7 @@ function isAnalysisEvent(value: unknown): value is AnalysisEvent {
     isNullableNumber(value["secondsSincePrevious"]);
 }
 
-function isClipRange(value: unknown): value is ProjectClipRange {
+function isClipRange(value: unknown): value is ClipRange {
   if (!isObject(value) || typeof value["isFullVideo"] !== "boolean") return false;
   return ["startTimestamp", "endTimestamp"].every((key) => value[key] === undefined || typeof value[key] === "string") &&
     ["startSeconds", "endSeconds"].every((key) => value[key] === undefined || (typeof value[key] === "number" && Number.isFinite(value[key])));
@@ -124,7 +123,7 @@ export function parseProjectFile(text: string): ParseProjectResult {
     return fail("The project's session information is damaged.");
   }
   const originalUrl = replay["originalUrl"] as string | undefined;
-  const clipRange = replay["clipRange"] as ProjectClipRange | undefined;
+  const clipRange = replay["clipRange"] as ClipRange | undefined;
   const project = createProjectFile({
     replay: { videoPath: replay["videoPath"], title: replay["title"], ...(originalUrl !== undefined ? { originalUrl } : {}), ...(clipRange ? { clipRange } : {}) },
     events: table["events"],
@@ -166,7 +165,7 @@ export function saveRecentProjects(list: RecentProject[]): void {
  */
 export async function redownloadVideo(
   url: string,
-  clipRange?: ProjectClipRange,
+  clipRange?: ClipRange,
   onProgress: (percent: number) => void = () => undefined,
 ): Promise<string | null> {
   // Loaded lazily: storageAdapter imports this file, so a static import would be circular.

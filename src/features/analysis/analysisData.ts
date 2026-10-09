@@ -125,8 +125,13 @@ export const INITIAL_ANALYSIS_EVENTS: AnalysisEvent[] = [
 ];
 
 export function formatTimestamp(totalSeconds: number): string {
-  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
-  return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, "0")}`;
+  // The one shared time formatter: under an hour shows "m:ss", an hour or more shows "h:mm:ss".
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(safe / 3600);
+  const m = Math.floor((safe % 3600) / 60);
+  const s = safe % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 export function seekTimeForEvent(timestamp: number): number {

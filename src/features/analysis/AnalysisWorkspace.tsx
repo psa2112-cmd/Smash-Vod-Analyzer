@@ -30,7 +30,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { formatTimestampInput, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions } from "./inlineEditing";
+import { formatTimestampString, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions } from "./inlineEditing";
 import type { ReactNode } from "react";
 import { ReplayMediaPlayer, type SeekRequest } from "./ReplayMediaPlayer";
 import { registerLocalVideo, resolvePlaybackSource, resolvePlaybackSourceAsync, revokeAllLocalVideos } from "./playbackSource";
@@ -1564,7 +1564,7 @@ function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBegi
       case "timestamp": return (
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" className="size-7 shrink-0 text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play /></Button>
-          <InlineTextCell {...textCellProps("timestamp")} label={`timestamp at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={formatTimestampInput(event.timestamp)} display={<span className="font-mono text-primary">{formatTimestamp(event.timestamp)}</span>} onCommit={(value) => { const seconds = parseTimestampInput(value); if (seconds !== null) onUpdate({ timestamp: seconds }); }} />
+          <InlineTextCell {...textCellProps("timestamp")} label={`timestamp at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={formatTimestamp(event.timestamp)} display={<span className="font-mono text-primary">{formatTimestamp(event.timestamp)}</span>} onCommit={(value) => { const seconds = parseTimestampInput(value); if (seconds !== null) onUpdate({ timestamp: seconds }); }} />
         </div>
       );
       case "damage": return <InlineTextCell {...textCellProps("damage")} label={`damage at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={event.damage === null ? "" : event.damage.toFixed(1)} display={<span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>} onCommit={(value) => onUpdate({ damage: parseDamageInput(value) })} />;
@@ -1746,7 +1746,7 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
         <DialogHeader><DialogTitle>Add manual event</DialogTitle><DialogDescription>Capture a meaningful moment at the current playhead.</DialogDescription></DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-[120px_1fr] gap-3">
-            <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={draftTimestamp} onChange={(changeEvent) => setDraftTimestamp(changeEvent.target.value)} placeholder={formatTimestamp(timestamp)} aria-label="Event timestamp" className="mt-1 font-mono" /></label>
+            <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={draftTimestamp} onChange={(changeEvent) => setDraftTimestamp(changeEvent.target.value)} onBlur={() => { if (draftTimestamp.trim()) setDraftTimestamp(formatTimestampString(draftTimestamp)); }} onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); keyEvent.stopPropagation(); /* Enter tidies the time just like clicking away */ if (draftTimestamp.trim()) setDraftTimestamp(formatTimestampString(draftTimestamp)); } }} placeholder={formatTimestamp(timestamp)} aria-label="Event timestamp" className="mt-1 font-mono" /></label>
             <div className="text-xs font-medium text-muted-foreground"><span id="manual-event-type-label">Event type</span><EventTypeListbox triggerRef={eventTypeRef} value={eventType} onChange={onEventTypeChange} onArrowDownWhenClosed={() => focusTag(0)} /></div>
           </div>
            <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag, index) => <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => toggleTag(index)}>{tag}</Button>)}</div></fieldset>

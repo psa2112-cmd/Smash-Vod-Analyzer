@@ -1,4 +1,5 @@
 import { isYouTubeUrl } from "./youtubeUrl";
+import { formatTimestampString, parseTimestampInput } from "@/features/analysis/inlineEditing";
 
 export type ReplaySourceKind = "file" | "youtube" | "twitch";
 
@@ -53,12 +54,9 @@ export function detectLinkPlatform(raw: string): LinkPlatform | null {
   return null;
 }
 
-/** Groups up to six digits in pairs, as in the provided video-download time input. */
+/** Tidies a typed time using the app-wide rule (digits read right to left). Empty stays empty. */
 export function formatTimestampInput(raw: string): string {
-  const digits = raw.replace(/\D/g, "").slice(0, 6);
-  return [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)]
-    .filter(Boolean)
-    .join(":");
+  return raw.trim() === "" ? "" : formatTimestampString(raw);
 }
 
 export function digitsBefore(text: string, pos: number): number {
@@ -75,14 +73,13 @@ export function caretForDigitCount(formatted: string, count: number): number {
   return formatted.length;
 }
 
-export const DOWNLOAD_TIME_PATTERN = /^(([0-5]\d:[0-5]\d)|(\d{1,2}:[0-5]\d:[0-5]\d))$/;
+/** Allowed characters while typing a time: digits and colons only. */
+export const DOWNLOAD_TIME_PATTERN = /^[\d:]+$/;
 
-/** Parses "mm:ss" or "hh:mm:ss" into seconds; null when malformed. */
+/** Reads a typed time ("123", "1:23", "1:02:03") into seconds; null when nothing usable was typed. */
 export function parseClipTimestamp(raw: string): number | null {
   if (!DOWNLOAD_TIME_PATTERN.test(raw.trim())) return null;
-  const parts = raw.trim().split(":");
-  const numbers = parts.map(Number);
-  return numbers.reduce((total, value) => total * 60 + value, 0);
+  return parseTimestampInput(raw);
 }
 
 export function validateClipRange(isFullVideo: boolean, start: string, end: string): ValidationResult<ClipRange> {

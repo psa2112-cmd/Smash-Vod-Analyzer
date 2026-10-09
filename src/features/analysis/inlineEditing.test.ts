@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { formatTimestampInput, handleArrowDown, handleArrowLeft, handleArrowRight, handleArrowUp, parseCharacterInput, parseDamageInput, parseTimestampInput } from "./inlineEditing";
+import { formatTimestampString, handleArrowDown, handleArrowLeft, handleArrowRight, handleArrowUp, parseCharacterInput, parseDamageInput, parseTimestampInput } from "./inlineEditing";
 
 describe("inline editing parsers", () => {
-  it("parses strict mm:ss timestamps", () => {
+  it("reads timestamps right to left", () => {
+    expect(formatTimestampString("1")).toBe("0:01");
+    expect(formatTimestampString("12")).toBe("0:12");
+    expect(formatTimestampString("123")).toBe("1:23");
+    expect(formatTimestampString("1234")).toBe("12:34");
+    expect(formatTimestampString("1:02:03")).toBe("1:02:03");
+    expect(formatTimestampString("")).toBe("0:00");
+    expect(parseTimestampInput("123")).toBe(83);
     expect(parseTimestampInput("02:15")).toBe(135);
-    expect(parseTimestampInput("0:05")).toBe(5);
-    expect(parseTimestampInput("2:75")).toBeNull();
-    expect(parseTimestampInput("135")).toBeNull();
-    expect(parseTimestampInput("ab:cd")).toBeNull();
-    expect(formatTimestampInput(135)).toBe("02:15");
+    expect(parseTimestampInput("10203")).toBe(3723);
+    expect(parseTimestampInput("ab")).toBeNull();
+    expect(formatTimestampString("8000")).toBe("1:20:00");
   });
   it("parses damage with % tolerance", () => {
     expect(parseDamageInput("14.24%")).toBe(14.2);

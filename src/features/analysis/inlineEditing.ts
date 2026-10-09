@@ -1,14 +1,29 @@
-/** Parses strict mm:ss input (e.g. "02:15" or "2:15") into total seconds; null when invalid. */
-export function parseTimestampInput(value: string): number | null {
-  const match = /^(\d{1,3}):([0-5]\d)$/.exec(value.trim());
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
+import { formatTimestamp } from "./analysisData";
+
+/**
+ * Reads typed digits from right to left: the last 2 are seconds, the 2 before are minutes,
+ * anything left over is hours. Colons are ignored, so "1:23" and "123" mean the same thing.
+ * Returns null when there are no digits at all.
+ */
+function readTimestampDigits(input: string): number | null {
+  const digits = input.replace(/\D/g, "");
+  if (!digits) return null;
+  const seconds = Number(digits.slice(-2));
+  const minutes = Number(digits.slice(-4, -2) || "0");
+  const hours = Number(digits.slice(0, -4) || "0");
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+  return Number.isFinite(totalSeconds) ? totalSeconds : null;
 }
 
-/** Formats seconds as zero-padded mm:ss for the inline editor. */
-export function formatTimestampInput(totalSeconds: number): string {
-  const safe = Math.max(0, Math.floor(totalSeconds));
-  return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+/** Turns typed digits into a tidy time like "0:01", "1:23", "12:34" or "1:23:45". Empty becomes "0:00". */
+export function formatTimestampString(input: string): string {
+  // Read the typed digits as seconds, then hand off to the one shared formatter.
+  return formatTimestamp(readTimestampDigits(input) ?? 0);
+}
+
+/** Converts any typed time (with or without colons) into total seconds; null when nothing was typed. */
+export function parseTimestampInput(value: string): number | null {
+  return readTimestampDigits(value);
 }
 
 /** Parses damage input, tolerating a trailing %. Empty, invalid or negative values mean "no damage". */

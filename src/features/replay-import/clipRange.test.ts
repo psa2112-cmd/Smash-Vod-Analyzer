@@ -8,15 +8,12 @@ describe("detectLinkPlatform", () => {
 });
 
 describe("formatTimestampInput", () => {
-  it("groups digits as mm:ss", () => expect(formatTimestampInput("1230")).toBe("12:30"));
-  it("inserts a colon after every two digits while typing", () => {
-    expect(formatTimestampInput("123")).toBe("12:3");
-    expect(formatTimestampInput("12345")).toBe("12:34:5");
-    expect(formatTimestampInput("123456")).toBe("12:34:56");
+  it("reads digits right to left", () => {
+    expect(formatTimestampInput("123")).toBe("1:23");
+    expect(formatTimestampInput("1234")).toBe("12:34");
+    expect(formatTimestampInput("10203")).toBe("1:02:03");
   });
-  it("ignores stray non-digit characters", () => expect(formatTimestampInput("1a2b3")).toBe("12:3"));
-  it("caps at hh:mm:ss length", () => expect(formatTimestampInput("1234567")).toBe("12:34:56"));
-  it("regroups values typed with colons", () => expect(formatTimestampInput("1:00:00")).toBe("10:00:0"));
+  it("ignores colons", () => expect(formatTimestampInput("1:00:00")).toBe("1:00:00"));
   it("returns empty for empty input", () => expect(formatTimestampInput("")).toBe(""));
 });
 
@@ -39,7 +36,11 @@ describe("parseClipTimestamp", () => {
     expect(parseClipTimestamp("01:45:20")).toBe(6320);
     expect(parseClipTimestamp("1:00:00")).toBe(3600);
   });
-  it.each(["", "1:2", "12:60", "abc", "1:00:00:00"])("rejects %s", (raw) => expect(parseClipTimestamp(raw)).toBeNull());
+  it("parses unpadded digits", () => {
+    expect(parseClipTimestamp("123")).toBe(83);
+    expect(parseClipTimestamp("1:23")).toBe(83);
+  });
+  it.each(["", "abc", "1a2"])("rejects %s", (raw) => expect(parseClipTimestamp(raw)).toBeNull());
 });
 
 
@@ -54,5 +55,5 @@ describe("validateClipRange", () => {
     });
   });
   it("rejects end before start", () => expect(validateClipRange(false, "10:00", "05:00").ok).toBe(false));
-  it("rejects bad format", () => expect(validateClipRange(false, "5", "10:00").ok).toBe(false));
+  it("rejects bad format", () => expect(validateClipRange(false, "abc", "10:00").ok).toBe(false));
 });

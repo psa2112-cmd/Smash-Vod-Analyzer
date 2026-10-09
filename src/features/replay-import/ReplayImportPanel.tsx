@@ -1,11 +1,8 @@
-import { useId, useLayoutEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
+import { useId, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { Upload, Link2, Check, CheckCircle2, AlertCircle, Loader2, X, Film } from "lucide-react";
 import {
   ACCEPTED_VIDEO_TYPES,
-  DOWNLOAD_TIME_PATTERN,
-  caretForDigitCount,
   detectLinkPlatform,
-  digitsBefore,
   formatFileSize,
   formatTimestampInput,
   validateClipRange,
@@ -43,7 +40,6 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pendingCaret = useRef<{ input: HTMLInputElement; count: number } | null>(null);
   const ids = { link: useId(), full: useId(), start: useId(), end: useId(), file: useId() };
 
   const platform = detectLinkPlatform(link);
@@ -55,30 +51,15 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
   const hasTypedRange = Boolean(startTime.trim() && endTime.trim());
   const clipError = clipResult && !clipResult.ok && hasTypedRange ? clipResult.error : null;
 
-  useLayoutEffect(() => {
-    const pending = pendingCaret.current;
-    if (!pending) return;
-    pendingCaret.current = null;
-    const caret = caretForDigitCount(pending.input.value, pending.count);
-    pending.input.setSelectionRange(caret, caret);
-  }, [startTime, endTime]);
-
+  // While typing, only keep digits and colons — no reformatting, so the cursor never jumps.
   const handleTimeChange = (event: ChangeEvent<HTMLInputElement>, setTime: (value: string) => void) => {
-    const input = event.currentTarget;
-    const count = digitsBefore(input.value, input.selectionStart ?? input.value.length);
-    const formatted = formatTimestampInput(input.value);
-    pendingCaret.current = { input, count };
-    setTime(formatted);
-    if (input.value === formatted) {
-      const caret = caretForDigitCount(formatted, count);
-      input.setSelectionRange(caret, caret);
-      pendingCaret.current = null;
-    }
+    setTime(event.currentTarget.value.replace(/[^\d:]/g, ""));
   };
 
-  const validateTimeOnBlur = (input: HTMLInputElement) => {
-    input.setCustomValidity(input.value === "" || DOWNLOAD_TIME_PATTERN.test(input.value) ? "" : "Enter a valid time");
-    input.reportValidity();
+  // When the user leaves the field, tidy the time (e.g. "123" becomes "1:23").
+  const validateTimeOnBlur = (input: HTMLInputElement, setTime: (value: string) => void) => {
+    if (input.value.trim()) setTime(formatTimestampInput(input.value));
+    input.setCustomValidity("");
   };
 
   const acceptFile = (candidate: File | undefined) => {
@@ -185,7 +166,7 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
                     placeholder="mm:ss or hh:mm:ss"
                     value={startTime}
                     onChange={(e) => handleTimeChange(e, setStartTime)}
-                    onBlur={(e) => validateTimeOnBlur(e.currentTarget)}
+                    onBlur={(e) => validateTimeOnBlur(e.currentTarget, setStartTime)}
                     className={inputClass(Boolean(clipError))}
                   />
                 </div>
@@ -197,7 +178,7 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
                     placeholder="mm:ss or hh:mm:ss"
                     value={endTime}
                     onChange={(e) => handleTimeChange(e, setEndTime)}
-                    onBlur={(e) => validateTimeOnBlur(e.currentTarget)}
+                    onBlur={(e) => validateTimeOnBlur(e.currentTarget, setEndTime)}
                     className={inputClass(Boolean(clipError))}
                   />
                 </div>

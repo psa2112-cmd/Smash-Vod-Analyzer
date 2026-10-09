@@ -106,5 +106,6 @@ describe("analysis data utilities", () => {
     expect(seekTimeForEvent(92)).toBe(91);
     expect(seekTimeForEvent(0.4)).toBe(0);
     expect(formatTimestamp(92)).toBe("1:32");
+    expect(formatTimestamp(4800)).toBe("1:20:00");
   });
 });

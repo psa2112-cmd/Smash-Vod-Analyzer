@@ -582,7 +582,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
       action();
       return;
     }
-    const seekOffsets: Record<string, number> = { "7": -FRAME_SECONDS, "8": FRAME_SECONDS, u: -1.5, i: 1.5, j: -5, arrowleft: -5, k: 5, arrowright: 5 };
+    const seekOffsets: Record<string, number> = { "7": -FRAME_SECONDS, "8": FRAME_SECONDS, u: -1.5, i: 1.5, j: -5, k: 5 };
     if (key === " ") {
       event.preventDefault();
       setIsPlaying((playing) => !playing);
@@ -968,8 +968,8 @@ const SHORTCUT_SECTIONS: ShortcutSection[] = [
       { description: "Step forward 1 frame", keys: ["8"] },
       { description: "Rewind 1.5 seconds", keys: ["U"] },
       { description: "Forward 1.5 seconds", keys: ["I"] },
-      { description: "Rewind 5 seconds", keys: ["J", "←"] },
-      { description: "Forward 5 seconds", keys: ["K", "→"] },
+      { description: "Rewind 5 seconds", keys: ["J"] },
+      { description: "Forward 5 seconds", keys: ["K"] },
       { description: "Jump video to selected event", keys: ["P"] },
     ],
   },

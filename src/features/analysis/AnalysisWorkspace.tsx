@@ -1616,7 +1616,9 @@ function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange 
   };
   const onTagKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     // Toggle on the press itself so the tag flips with no perceptible delay.
-    if (keyEvent.key === "Shift") {
+    if (keyEvent.key === "Shift" || keyEvent.key === " " || keyEvent.key === "Spacebar") {
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
       if (!keyEvent.repeat) toggleTag(index);
       return;
     }
@@ -1628,8 +1630,8 @@ function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange 
   return editing ? (
     <div ref={editorRef} className="flex flex-wrap gap-1 rounded border border-primary/40 bg-card p-1.5"
       onKeyDown={(keyEvent) => {
-        // Space belongs to playback, so it must never activate a tag button.
-        if (keyEvent.key === " ") { keyEvent.preventDefault(); return; }
+        // Space toggles tags (handled on the button) and must never reach playback.
+        if (keyEvent.key === " ") { keyEvent.preventDefault(); keyEvent.stopPropagation(); return; }
         if (keyEvent.key === "Enter") { keyEvent.preventDefault(); keyEvent.stopPropagation(); onEndEdit(true); }
         else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); keyEvent.stopPropagation(); onCancel(); }
       }}>

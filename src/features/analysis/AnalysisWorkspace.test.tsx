@@ -197,6 +197,12 @@ describe("AnalysisWorkspace", () => {
     if (!firstTagEditor) return;
     await user.click(firstTagEditor);
     expect(screen.getByRole("button", { name: "Neutral", pressed: true })).toHaveClass("bg-primary");
+    const neutral = screen.getByRole("button", { name: "Neutral", pressed: true });
+    fireEvent.keyDown(neutral, { key: " " });
+    expect(neutral).toHaveAttribute("aria-pressed", "false");
+    fireEvent.keyDown(neutral, { key: " " });
+    expect(neutral).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Play replay" })).toBeInTheDocument();
   });
 
   it("supports click-to-play and keyboard hotkeys", async () => {

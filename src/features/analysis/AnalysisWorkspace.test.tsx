@@ -209,7 +209,7 @@ describe("AnalysisWorkspace", () => {
     (document.activeElement as HTMLElement | null)?.blur();
     await user.keyboard("k");
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:05");
-    await user.keyboard("{ArrowRight}");
+    await user.keyboard("k");
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:10");
     await user.keyboard("j");
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:05");

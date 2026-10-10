@@ -569,7 +569,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
       setIsManualEventOpen(true);
       return;
     }
-    if (isTyping || isManualEventOpen || event.altKey || event.metaKey) return;
+    if (isTyping || isManualEventOpen || event.altKey || event.metaKey || event.defaultPrevented) return;
     const key = event.key.toLowerCase();
     if (event.ctrlKey) {
       const ctrlActions: Record<string, () => void> = {
@@ -582,7 +582,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
       action();
       return;
     }
-    const seekOffsets: Record<string, number> = { j: -FRAME_SECONDS, k: FRAME_SECONDS, u: -1, i: 1, "7": -5, "8": 5 };
+    const seekOffsets: Record<string, number> = { "7": -FRAME_SECONDS, "8": FRAME_SECONDS, u: -1.5, i: 1.5, j: -5, arrowleft: -5, k: 5, arrowright: 5 };
     if (key === " ") {
       event.preventDefault();
       setIsPlaying((playing) => !playing);
@@ -964,12 +964,12 @@ const SHORTCUT_SECTIONS: ShortcutSection[] = [
     title: "Video Playback",
     shortcuts: [
       { description: "Play / Pause", keys: ["Space"] },
-      { description: "Step backward 1 frame", keys: ["J"] },
-      { description: "Step forward 1 frame", keys: ["K"] },
-      { description: "Rewind 1 second", keys: ["U"] },
-      { description: "Forward 1 second", keys: ["I"] },
-      { description: "Rewind 5 seconds", keys: ["7"] },
-      { description: "Forward 5 seconds", keys: ["8"] },
+      { description: "Step backward 1 frame", keys: ["7"] },
+      { description: "Step forward 1 frame", keys: ["8"] },
+      { description: "Rewind 1.5 seconds", keys: ["U"] },
+      { description: "Forward 1.5 seconds", keys: ["I"] },
+      { description: "Rewind 5 seconds", keys: ["J", "←"] },
+      { description: "Forward 5 seconds", keys: ["K", "→"] },
       { description: "Jump video to selected event", keys: ["P"] },
     ],
   },

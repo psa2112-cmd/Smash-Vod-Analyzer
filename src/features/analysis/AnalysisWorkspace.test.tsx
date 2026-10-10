@@ -207,10 +207,12 @@ describe("AnalysisWorkspace", () => {
     await user.keyboard(" ");
     expect(screen.getByRole("button", { name: /play replay/i })).toBeInTheDocument();
     (document.activeElement as HTMLElement | null)?.blur();
-    await user.keyboard("8");
+    await user.keyboard("k");
     expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:05");
-    await user.keyboard("7u");
-    expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:16");
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:10");
+    await user.keyboard("j");
+    expect(screen.getByTestId("playhead-time")).toHaveTextContent("0:05");
     await user.keyboard("{Control>}m{/Control}");
     expect(screen.queryByRole("button", { name: /play replay/i })).not.toBeInTheDocument();
     await user.keyboard("{Control>},{/Control}");

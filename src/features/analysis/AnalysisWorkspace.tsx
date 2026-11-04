@@ -264,6 +264,8 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   dataRef.current = { events, notes };
   const savedSnapshotRef = useRef<WorkspaceSnapshot>(createSnapshot(events, notes));
   const textEditBaselineRef = useRef<WorkspaceSnapshot | null>(null);
+  /** Set once a project is loaded, so the mount effect never resets the saved baseline afterwards. */
+  const loadedProjectRef = useRef(false);
 
   /** Single source of truth for the unsaved state: React state drives the UI, the parent gets notified. */
   const setUnsavedChangesPresent = (value: boolean) => {
@@ -285,11 +287,15 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   useEffect(() => {
     setLayout(readStoredLayout());
     setTablePreferences(readStoredTablePreferences());
+    setRecentProjects(loadRecentProjects());
+    // A loaded project sets its own saved baseline in applyProject. StrictMode re-runs
+    // this effect after that, so without this guard the baseline (and notes) would be
+    // reset to the sample data and the workspace would wrongly show "Unsaved changes".
+    if (loadedProjectRef.current) return;
     // Match notes live only in the .vodproject file, so a fresh workspace starts empty.
     setNotes("");
     // ALPHA BUILD: original was createSnapshot(INITIAL_ANALYSIS_EVENTS, "")
     savedSnapshotRef.current = createSnapshot(STARTING_EVENTS, "");
-    setRecentProjects(loadRecentProjects());
   }, []);
 
   // The Unsaved Changes indicator always reflects a comparison with the last saved version,
@@ -473,6 +479,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
 
   const applyProject = (project: VodProjectFile, handle: ProjectHandle) => {
     console.info("[AnalysisWorkspace] project loaded", { filePath: handle.filePath, events: project.table.events.length });
+    loadedProjectRef.current = true;
     setEvents(project.table.events);
     setFilters(project.table.filters);
     setTablePreferences({ ...project.table.columnPreferences, sorts: project.table.sorts });
@@ -1179,7 +1186,6 @@ function WorkspaceHeader({ eventCount, layout, controlsVisible, title, unsavedCh
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="truncate font-display text-sm font-semibold">{title}</h1>
-            <Badge variant="outline" className="border-success/30 bg-success/10 text-success">Analysis complete</Badge>
             {unsavedChangesPresent && <span className="text-[11px] text-muted-foreground">• Unsaved changes</span>}
           </div>
           <p className="font-mono text-[11px] text-muted-foreground">{eventCount} review events</p>
@@ -1776,7 +1782,6 @@ function NotesPanel({ notes, onChange, onCommit, textareaRef }: { notes: string;
     <section className="flex h-full min-h-0 flex-col bg-card/40 p-4">
       <div className="mb-3 flex items-center justify-between">
         <div><h2 className="font-display text-sm font-semibold">Match notes</h2><p className="text-[11px] text-muted-foreground">High-level patterns across the set</p></div>
-        <span className="text-[10px] text-success">Saved locally</span>
       </div>
       <Textarea ref={textareaRef} aria-label="Match notes" value={notes} onBlur={onCommit} onChange={(event) => saveNotes(event.target.value)} placeholder="What patterns are showing up?&#10;&#10;• Panicking in the corner&#10;• Missing kill confirms&#10;• Winning neutral, losing advantage" className="min-h-0 flex-1 resize-none border-border bg-background/45 text-xs leading-5" />
     </section>

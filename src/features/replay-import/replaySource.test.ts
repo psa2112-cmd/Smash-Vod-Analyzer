@@ -19,12 +19,14 @@ describe("validateTwitchVodUrl", () => {
 });
 
 describe("validateVideoFile", () => {
-  const makeFile = (type: string, size = 10) => {
-    const f = new File(["x"], "clip", { type });
+  const makeFile = (type: string, size = 10, name = "clip") => {
+    const f = new File(["x"], name, { type });
     Object.defineProperty(f, "size", { value: size });
     return f;
   };
   it("accepts mp4", () => expect(validateVideoFile(makeFile("video/mp4")).ok).toBe(true));
+  it("accepts a blank-type file with a video extension", () => expect(validateVideoFile(makeFile("", 10, "clip.mp4")).ok).toBe(true));
+  it("rejects a png", () => expect(validateVideoFile(makeFile("image/png", 10, "clip.png")).ok).toBe(false));
   it("rejects non-video", () => expect(validateVideoFile(makeFile("image/png")).ok).toBe(false));
   it("rejects too large", () => expect(validateVideoFile(makeFile("video/mp4", MAX_VIDEO_FILE_BYTES + 1)).ok).toBe(false));
 });

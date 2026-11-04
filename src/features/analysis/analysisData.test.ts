@@ -13,17 +13,17 @@ import {
 const events: AnalysisEvent[] = [
   {
     id: "late-hit",
-    eventType: "Hit Received",
+    gamestate: ["Juggling"], position: ["Disadvantage"],
     character: "Mario",
     timestamp: 92,
     damage: 18.4,
-    tags: ["Landing", "Air Dodge Read"],
+    tags: ["Failed", "Bad"],
     note: "Drifted into the juggle.",
     secondsSincePrevious: 7.2,
   },
   {
     id: "manual",
-    eventType: "Missed Tech Chase",
+    gamestate: ["Techchase"], position: ["Advantage"],
     character: null,
     timestamp: 45,
     damage: null,
@@ -50,12 +50,12 @@ describe("analysis data utilities", () => {
     const secondEvent = events[1];
     if (!firstEvent || !secondEvent) throw new Error("Expected analysis fixtures");
     const tiedEvents = [
-      { ...firstEvent, id: "later", eventType: "Hit Dealt" as const, timestamp: 80 },
-      { ...firstEvent, id: "earlier", eventType: "Hit Dealt" as const, timestamp: 20 },
-      { ...secondEvent, id: "other", eventType: "Neutral Win" as const, timestamp: 10 },
+      { ...firstEvent, id: "later", character: "Fox", timestamp: 80 },
+      { ...firstEvent, id: "earlier", character: "Fox", timestamp: 20 },
+      { ...secondEvent, id: "other", character: "Wolf", timestamp: 10 },
     ];
     expect(sortAnalysisEvents(tiedEvents, [
-      { key: "eventType", direction: "asc" },
+      { key: "character", direction: "asc" },
       { key: "timestamp", direction: "asc" },
     ]).map((event) => event.id)).toEqual(["earlier", "later", "other"]);
   });
@@ -71,12 +71,12 @@ describe("analysis data utilities", () => {
   });
 
   it("reorders columns and safely normalizes stored preferences", () => {
-    expect(reorderTableColumns(["eventType", "character", "timestamp"], "timestamp", "eventType")).toEqual([
-      "timestamp", "eventType", "character",
+    expect(reorderTableColumns(["gamestate", "character", "timestamp"], "timestamp", "gamestate")).toEqual([
+      "timestamp", "gamestate", "character",
     ]);
     const normalized = normalizeTablePreferences({
       order: ["note", "not-a-column"],
-      widths: { note: 12, eventType: 9999 },
+      widths: { note: 12, gamestate: 9999 },
       hidden: ["damage", "timestamp", "not-a-column"],
       sorts: [{ key: "damage", direction: "desc" }, { key: "bad", direction: "asc" }],
     });
@@ -90,9 +90,9 @@ describe("analysis data utilities", () => {
   it("filters events by quick filter and note search", () => {
     expect(
       applyEventFilters(events, {
-        quickFilter: "received",
+        quickFilter: "all",
         query: "juggle",
-        eventType: "all",
+        positionFilter: ["Disadvantage"],
         character: "all",
         tag: "all",
         minDamage: 0,
@@ -100,6 +100,13 @@ describe("analysis data utilities", () => {
         minElapsed: 0,
       }).map((event) => event.id),
     ).toEqual(["late-hit"]);
+  });
+
+  it("filters by every chosen gamestate, position and tag", () => {
+    const base = { quickFilter: "all" as const, query: "", character: "all", tag: "all", minDamage: 0, maxDamage: 999, minElapsed: 0 };
+    expect(applyEventFilters(events, { ...base, gamestateFilter: ["Techchase"] }).map((event) => event.id)).toEqual(["manual"]);
+    expect(applyEventFilters(events, { ...base, selectedTags: ["Failed", "Bad"] }).map((event) => event.id)).toEqual(["late-hit"]);
+    expect(applyEventFilters(events, { ...base, positionFilter: ["Neutral"] })).toEqual([]);
   });
 
   it("seeks one second before an event without going below zero", () => {

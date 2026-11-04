@@ -18,8 +18,10 @@ export interface UndoHistory<T = WorkspaceSnapshot> {
 export const EMPTY_UNDO_HISTORY: UndoHistory<never> = { undoStack: [], redoStack: [] };
 
 export function createSnapshot(events: AnalysisEvent[], notes: string): WorkspaceSnapshot {
-  return { events: events.map((event) => ({ ...event, tags: [...event.tags] })), notes };
+  return { events: events.map((event) => ({ ...event, gamestate: [...event.gamestate], position: [...event.position], tags: [...event.tags] })), notes };
 }
+
+const sameList = (left: string[], right: string[]) => left.length === right.length && left.every((item, index) => item === right[index]);
 
 export function snapshotsEqual(left: WorkspaceSnapshot, right: WorkspaceSnapshot): boolean {
   if (left === right) return true;
@@ -30,14 +32,14 @@ export function snapshotsEqual(left: WorkspaceSnapshot, right: WorkspaceSnapshot
     if (!other) return false;
     return (
       event.id === other.id &&
-      event.eventType === other.eventType &&
+      sameList(event.gamestate, other.gamestate) &&
+      sameList(event.position, other.position) &&
       event.character === other.character &&
       event.timestamp === other.timestamp &&
       event.damage === other.damage &&
       event.note === other.note &&
       event.secondsSincePrevious === other.secondsSincePrevious &&
-      event.tags.length === other.tags.length &&
-      event.tags.every((tag, tagIndex) => tag === other.tags[tagIndex])
+      sameList(event.tags, other.tags)
     );
   });
 }

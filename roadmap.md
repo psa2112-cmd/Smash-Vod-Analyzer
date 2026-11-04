@@ -1,5 +1,14 @@
 # Analysis workspace refinements
 
+## Playback during resizing
+- [ ] Keep the video mounted during panel resizing and preserve Reset layout.
+- [ ] Resume remounted players at the current playhead and verify explicit seeking.
+
+## Timestamp controls and Add Event grids
+- [x] Sanitize all timestamp inputs and map W/A/S/D to their arrow behavior.
+- [x] Lay out Add Event Gamestate in four columns and Tags in three columns.
+- [x] Verify focused helper tests and Add Event/table timestamp editing in preview; home clip-range inputs remain hidden by the existing build flag.
+
 - [x] Use “Untitled Review” for an empty workspace, remove the sample video, and delete stage/game-number labels.
 
 - [ ] Replace only video-download timestamp inputs with the attached two-digit grouping, caret and blur validation.

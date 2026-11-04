@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { formatTimestampString, handleArrowDown, handleArrowLeft, handleArrowRight, handleArrowUp, parseCharacterInput, parseDamageInput, parseTimestampInput } from "./inlineEditing";
+import { formatTimestampString, handleArrowDown, handleArrowLeft, handleArrowRight, handleArrowUp, parseCharacterInput, parseDamageInput, parseTimestampInput, sanitizeTimestampInput, toArrowKey } from "./inlineEditing";
+
+describe("timestamp input controls", () => {
+  it("keeps only digits and colons in typed or pasted text", () => {
+    expect(sanitizeTimestampInput("1a2b3")).toBe("123");
+    expect(sanitizeTimestampInput("abc123")).toBe("123");
+    expect(sanitizeTimestampInput(" 1:02:03% ")).toBe("1:02:03");
+  });
+  it("maps WASD to the matching arrows without changing other keys", () => {
+    expect(toArrowKey("w")).toBe("ArrowUp");
+    expect(toArrowKey("A")).toBe("ArrowLeft");
+    expect(toArrowKey("s")).toBe("ArrowDown");
+    expect(toArrowKey("D")).toBe("ArrowRight");
+    expect(toArrowKey("Enter")).toBe("Enter");
+    expect(toArrowKey("ArrowDown")).toBe("ArrowDown");
+  });
+});
 
 describe("inline editing parsers", () => {
   it("reads timestamps right to left", () => {

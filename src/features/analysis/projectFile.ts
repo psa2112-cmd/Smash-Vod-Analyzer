@@ -1,4 +1,5 @@
 import {
+  GAMESTATE_OPTIONS,
   normalizeTablePreferences,
   type AnalysisEvent,
   type EventFilters,
@@ -41,9 +42,9 @@ export function createProjectFile(input: CreateProjectInput): VodProjectFile {
     version: PROJECT_SCHEMA_VERSION,
     replay: { ...input.replay, ...(input.replay.clipRange ? { clipRange: { ...input.replay.clipRange } } : {}) },
     table: {
-      events: input.events.map((event) => ({ ...event, tags: [...event.tags] })),
+      events: input.events.map((event) => ({ ...event, gamestate: [...event.gamestate], position: [...event.position], tags: [...event.tags] })),
       sorts: input.sorts.map((sort) => ({ ...sort })),
-      filters: { ...input.filters, selectedTags: [...(input.filters.selectedTags ?? [])] },
+      filters: { ...input.filters, gamestateFilter: [...(input.filters.gamestateFilter ?? [])], positionFilter: [...(input.filters.positionFilter ?? [])], selectedTags: [...(input.filters.selectedTags ?? [])] },
       columnPreferences: input.columnPreferences,
     },
     notes: input.notes,
@@ -60,16 +61,31 @@ const isObject = (value: unknown): value is Json => !!value && typeof value === 
 const isNullableString = (value: unknown) => value === null || typeof value === "string";
 const isNullableNumber = (value: unknown) => value === null || (typeof value === "number" && Number.isFinite(value));
 
-function isAnalysisEvent(value: unknown): value is AnalysisEvent {
+const isStringList = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+
+function isAnalysisEvent(value: unknown): boolean {
   if (!isObject(value)) return false;
+  // Older files stored a single "eventType" string instead of gamestate/position lists.
+  const hasNewFields = isStringList(value["gamestate"]) && isStringList(value["position"]);
   return typeof value["id"] === "string" &&
-    typeof value["eventType"] === "string" &&
+    (hasNewFields || typeof value["eventType"] === "string") &&
     isNullableString(value["character"]) &&
     typeof value["timestamp"] === "number" && Number.isFinite(value["timestamp"]) &&
     isNullableNumber(value["damage"]) &&
     Array.isArray(value["tags"]) && value["tags"].every((tag) => typeof tag === "string") &&
     typeof value["note"] === "string" &&
     isNullableNumber(value["secondsSincePrevious"]);
+}
+
+/** Upgrades an event from an older file: keeps a legacy event type only if it's a valid gamestate. */
+function upgradeEvent(value: Json): AnalysisEvent {
+  const { eventType, ...rest } = value;
+  const legacyGamestate = typeof eventType === "string" && (GAMESTATE_OPTIONS as readonly string[]).includes(eventType) ? [eventType] : [];
+  return {
+    ...(rest as unknown as AnalysisEvent),
+    gamestate: isStringList(value["gamestate"]) ? value["gamestate"] : legacyGamestate,
+    position: isStringList(value["position"]) ? value["position"] : [],
+  };
 }
 
 function isClipRange(value: unknown): value is ClipRange {
@@ -84,9 +100,9 @@ function isSortRule(value: unknown): value is SortRule {
 
 function isFilters(value: unknown): value is EventFilters {
   if (!isObject(value)) return false;
-  return ["quickFilter", "query", "eventType", "character", "tag"].every((key) => typeof value[key] === "string") &&
+  return ["quickFilter", "query", "character", "tag"].every((key) => typeof value[key] === "string") &&
     ["minDamage", "maxDamage", "minElapsed"].every((key) => typeof value[key] === "number") &&
-    (value["selectedTags"] === undefined || (Array.isArray(value["selectedTags"]) && value["selectedTags"].every((tag) => typeof tag === "string")));
+    ["selectedTags", "gamestateFilter", "positionFilter"].every((key) => value[key] === undefined || isStringList(value[key]));
 }
 
 const fail = (error: string): ParseProjectResult => {
@@ -126,9 +142,9 @@ export function parseProjectFile(text: string): ParseProjectResult {
   const clipRange = replay["clipRange"] as ClipRange | undefined;
   const project = createProjectFile({
     replay: { videoPath: replay["videoPath"], title: replay["title"], ...(originalUrl !== undefined ? { originalUrl } : {}), ...(clipRange ? { clipRange } : {}) },
-    events: table["events"],
+    events: (table["events"] as Json[]).map(upgradeEvent),
     sorts: table["sorts"],
-    filters: table["filters"],
+    filters: { ...table["filters"], quickFilter: ["all", "untagged", "high-damage"].includes(table["filters"].quickFilter) ? table["filters"].quickFilter : "all" },
     columnPreferences: normalizeTablePreferences(table["columnPreferences"]),
     notes,
     session: { currentTimestamp: Math.max(0, session["currentTimestamp"]), selectedRowId: session["selectedRowId"] as string | null },

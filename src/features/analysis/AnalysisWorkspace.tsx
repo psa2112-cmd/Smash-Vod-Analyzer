@@ -30,10 +30,10 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { formatTimestampString, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions } from "./inlineEditing";
+import { formatTimestampString, handleTimestampArrowKey, navigateTagGrid, parseCharacterInput, parseDamageInput, parseTimestampInput, readGridPositions, sanitizeTimestampInput } from "./inlineEditing";
 import type { ReactNode } from "react";
 import { ReplayMediaPlayer, type SeekRequest } from "./ReplayMediaPlayer";
-import { registerLocalVideo, resolvePlaybackSource, resolvePlaybackSourceAsync, revokeAllLocalVideos } from "./playbackSource";
+import { registerLocalVideo, resolvePlaybackSource, resolvePlaybackSourceAsync } from "./playbackSource";
 import { canDownloadVideos } from "./storageAdapter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,9 +57,11 @@ import {
   DEFAULT_FILTERS,
   DEFAULT_TABLE_PREFERENCES,
   INITIAL_ANALYSIS_EVENTS,
-  MANUAL_EVENT_TYPES,
-  ALL_EVENT_TYPES,
-  STARTER_TAGS,
+  MULTI_SELECT_FIELDS,
+  MULTI_SELECT_FIELD_IDS,
+  TAG_OPTIONS,
+  isMultiSelectField,
+  toggleOption,
   TABLE_COLUMNS,
   applyEventFilters,
   cycleSortRules,
@@ -69,7 +71,7 @@ import {
   seekTimeForEvent,
   sortAnalysisEvents,
   type AnalysisEvent,
-  type AnalysisEventType,
+  type MultiSelectField,
   type EventFilters,
   type QuickFilter,
   type SortRule,
@@ -116,8 +118,6 @@ import {
 } from "./undoRedo";
 import { TEXT_COMMIT_PAUSE_MS, isWordBoundary } from "./textUndoChunking";
 
-const VIDEO_DURATION = 224;
-const NOTES_KEY = "smash-replay-match-notes";
 const LAYOUT_KEY = "smash-replay-workspace-layout";
 const TABLE_PREFERENCES_KEY = "smash-replay-table-preferences";
 
@@ -196,13 +196,15 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [events, setEvents] = useState<AnalysisEvent[]>(STARTING_EVENTS);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
   const [tablePreferences, setTablePreferences] = useState(DEFAULT_TABLE_PREFERENCES);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>("evt-1");
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(72);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [notes, setNotes] = useState("");
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
+  // Only Reset layout restarts the panels; dragging must leave the video running.
+  const [layoutResetVersion, setLayoutResetVersion] = useState(0);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isManualEventOpen, setIsManualEventOpenState] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
@@ -219,9 +221,10 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     }
     setIsManualEventOpenState(shouldOpen);
   };
-  const [manualEventType, setManualEventType] = useState<AnalysisEventType>("Neutral Win");
+  const EMPTY_MANUAL_SELECTIONS: Record<MultiSelectField, string[]> = { gamestate: [], position: [], tags: [] };
   const [manualNote, setManualNote] = useState("");
-  const [manualTags, setManualTags] = useState<string[]>([]);
+  // Gamestate, position and tags chosen in the Add event box.
+  const [manualSelections, setManualSelections] = useState<Record<MultiSelectField, string[]>>(EMPTY_MANUAL_SELECTIONS);
   const [replay, setReplay] = useState<ProjectReplayInfo>(DEFAULT_REPLAY);
   const [projectHandle, setProjectHandle] = useState<ProjectHandle | null>(null);
   const [unsavedChangesPresent, setUnsavedChangesState] = useState(false);
@@ -230,18 +233,19 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [isVideoMissing, setIsVideoMissing] = useState(true);
-  const [videoDuration, setVideoDuration] = useState(VIDEO_DURATION);
+  const [videoDuration, setVideoDuration] = useState(0); // Unknown until the media player reports the real length.
   const [seekRequest, setSeekRequest] = useState<SeekRequest>({ time: 0, id: 0 });
   // Start with what we can resolve right away, then let the desktop app upgrade it to a file on disk.
   const [playbackSource, setPlaybackSource] = useState(() => resolvePlaybackSource(replay));
+  // Set when the player can't open/decode the file, so the re-link card is offered.
+  const [videoPlaybackError, setVideoPlaybackError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
+    setVideoPlaybackError(null);
     setPlaybackSource(resolvePlaybackSource(replay));
     void resolvePlaybackSourceAsync(replay).then((source) => { if (!cancelled) setPlaybackSource(source); });
     return () => { cancelled = true; };
   }, [replay]);
-  // Leaving the workspace frees any local video file held in memory.
-  useEffect(() => () => revokeAllLocalVideos(), []);
   /** Moves the playhead and tells the active media player to jump there. */
   const seekTo = (time: number) => {
     const clamped = Math.min(videoDuration, Math.max(0, time));
@@ -281,10 +285,10 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   useEffect(() => {
     setLayout(readStoredLayout());
     setTablePreferences(readStoredTablePreferences());
-    const storedNotes = window.localStorage.getItem(NOTES_KEY) ?? "";
-    setNotes(storedNotes);
-    // ALPHA BUILD: original was createSnapshot(INITIAL_ANALYSIS_EVENTS, storedNotes)
-    savedSnapshotRef.current = createSnapshot(STARTING_EVENTS, storedNotes);
+    // Match notes live only in the .vodproject file, so a fresh workspace starts empty.
+    setNotes("");
+    // ALPHA BUILD: original was createSnapshot(INITIAL_ANALYSIS_EVENTS, "")
+    savedSnapshotRef.current = createSnapshot(STARTING_EVENTS, "");
     setRecentProjects(loadRecentProjects());
   }, []);
 
@@ -325,7 +329,6 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
 
   useEffect(() => {
     let isCancelled = false;
-    setVideoDuration(VIDEO_DURATION);
     if (playbackSource) { setIsVideoMissing(false); return; }
     void (async () => {
       // Re-downloading is now a user choice on the "No Video Found" card, never automatic.
@@ -381,16 +384,72 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     session: { currentTimestamp: currentTime, selectedRowId: selectedEventId },
   });
 
-  const saveWorkspace = async (kind: "manual" | "auto"): Promise<boolean> => {
-    setIsSaving(true);
+  // Overwrite confirmation: asked on the first save of an opened file, and again after "Save as new copy".
+  const hasGrantedOverwritePermissionRef = useRef(false);
+  const needsChoiceAfterNewCopyRef = useRef(false);
+  // Only one save (and one save dialog) at a time; extra Ctrl+S presses wait instead of stacking dialogs.
+  const saveInFlightRef = useRef(false);
+  const [savePrompt, setSavePrompt] = useState<SavePromptKind | null>(null);
+  const savePromptResolverRef = useRef<((answer: SavePromptAnswer) => void) | null>(null);
+
+  /** Shows one of the save dialogs and waits for the user's answer. */
+  const askSavePrompt = (kind: SavePromptKind) => new Promise<SavePromptAnswer>((resolve) => {
+    savePromptResolverRef.current = resolve;
+    setSavePrompt(kind);
+  });
+  const answerSavePrompt = (answer: SavePromptAnswer) => {
+    const resolve = savePromptResolverRef.current;
+    savePromptResolverRef.current = null;
+    setSavePrompt(null);
+    resolve?.(answer);
+  };
+
+  const saveWorkspace = async (kind: "manual" | "auto", forceSaveAs = false): Promise<boolean> => {
+    if (saveInFlightRef.current) return false;
+    saveInFlightRef.current = true;
     try {
-      const handle = await saveProject(buildSnapshot(), projectHandle);
-      if (!handle) return false;
-      setProjectHandle(handle);
-      rememberRecentProject(handle);
+      let saveAsCopy = forceSaveAs;
+      // Ask before writing over an existing file the first time (or after saving a new copy).
+      if (!saveAsCopy && projectHandle && (needsChoiceAfterNewCopyRef.current || !hasGrantedOverwritePermissionRef.current)) {
+        if (kind === "auto") return false; // never pop a dialog from the background autosave
+        const answer = await askSavePrompt("choice");
+        if (answer === "cancel") return false;
+        if (answer === "copy") saveAsCopy = true;
+        else {
+          hasGrantedOverwritePermissionRef.current = true;
+          needsChoiceAfterNewCopyRef.current = false;
+        }
+      }
+
+      setIsSaving(true);
+      const snapshot = buildSnapshot();
+      let result = await saveProject(snapshot, saveAsCopy ? null : projectHandle, { forceSaveAs: saveAsCopy });
+      if (!result.ok && result.reason === "overwrite_failed") {
+        // The original file can't be written over: ask every time instead of downloading a copy silently.
+        setIsSaving(false);
+        const answer = await askSavePrompt("failed");
+        if (answer !== "copy") return false;
+        saveAsCopy = true;
+        setIsSaving(true);
+        result = await saveProject(snapshot, null, { forceSaveAs: true });
+      }
+      if (!result.ok) {
+        if (result.reason === "error") setProjectError(result.message ?? "The project could not be saved. Check that the file is still available and try again.");
+        return false;
+      }
+
+      setProjectHandle(result.handle);
+      rememberRecentProject(result.handle);
       markSavedPoint();
       setProjectError(null);
-      setNotification(kind === "auto" ? "Automatically Saved" : "Saved Successfully");
+      if (saveAsCopy) {
+        // Next save should ask whether to overwrite this new copy or make another one.
+        needsChoiceAfterNewCopyRef.current = true;
+        hasGrantedOverwritePermissionRef.current = false;
+      } else {
+        hasGrantedOverwritePermissionRef.current = true;
+      }
+      setNotification(kind === "auto" ? "Automatically Saved" : saveAsCopy ? "Saved As New File" : "Saved Successfully");
       return true;
     } catch (error) {
       console.error("[AnalysisWorkspace] save failed", error);
@@ -398,11 +457,13 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
       return false;
     } finally {
       setIsSaving(false);
+      saveInFlightRef.current = false;
     }
   };
 
   const autosaveRef = useRef<() => void>(() => undefined);
   autosaveRef.current = () => {
+    if (savePrompt !== null) return; // a save dialog is already waiting for the user
     if (projectHandle && unsavedChangesPresent) void saveWorkspace("auto");
   };
   useEffect(() => {
@@ -422,6 +483,9 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     setReplay(project.replay);
     setProjectHandle(handle);
     rememberRecentProject(handle);
+    // A freshly opened file must be confirmed before it is written over.
+    hasGrantedOverwritePermissionRef.current = false;
+    needsChoiceAfterNewCopyRef.current = false;
     // Opening a project is not undoable, so the history starts fresh at the loaded version.
     historyRef.current = EMPTY_UNDO_HISTORY;
     notesHistoryRef.current = EMPTY_UNDO_HISTORY;
@@ -486,20 +550,8 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     }
   };
 
-  // Sample replay only: simulate playback. Real sources report time from the media player.
-  useEffect(() => {
-    if (!isPlaying || playbackSource) return;
-    const timer = window.setInterval(() => {
-      setCurrentTime((time) => {
-        if (time >= VIDEO_DURATION) {
-          setIsPlaying(false);
-          return VIDEO_DURATION;
-        }
-        return time + 1;
-      });
-    }, 1000 / playbackRate);
-    return () => window.clearInterval(timer);
-  }, [isPlaying, playbackRate, playbackSource]);
+  // No simulated clock: without an attached video there is no timeline to advance.
+  // Real sources report time (and duration) from the media player.
 
   const applySnapshot = (snapshot: WorkspaceSnapshot) => {
     // Match notes are excluded from global history; only table data is restored.
@@ -543,7 +595,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   hotkeyHandlerRef.current = (event: KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s") {
       event.preventDefault();
-      void saveWorkspace("manual");
+      void saveWorkspace("manual", event.shiftKey);
       return;
     }
     const target = event.target as HTMLElement | null;
@@ -658,7 +710,6 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const applyNotes = (value: string) => {
     dataRef.current = { ...dataRef.current, notes: value };
     setNotes(value);
-    if (typeof window !== "undefined") window.localStorage.setItem(NOTES_KEY, value);
   };
 
   const undoNotes = () => {
@@ -706,11 +757,12 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     const previousTimestamp = [...events].sort((left, right) => right.timestamp - left.timestamp).find((event) => event.timestamp <= targetTime)?.timestamp;
     const event: AnalysisEvent = {
       id: `manual-${Date.now()}`,
-      eventType: manualEventType,
+      gamestate: manualSelections.gamestate,
+      position: manualSelections.position,
       character: null,
       timestamp: targetTime,
       damage: null,
-      tags: manualTags,
+      tags: manualSelections.tags,
       note: manualNote.trim(),
       secondsSincePrevious: previousTimestamp === undefined ? null : Math.max(0, Math.floor(targetTime - previousTimestamp)),
     };
@@ -719,7 +771,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     setFilters(DEFAULT_FILTERS);
     setSelectedEventId(event.id);
     setManualNote("");
-    setManualTags([]);
+    setManualSelections(EMPTY_MANUAL_SELECTIONS);
     setIsManualEventOpen(false);
   };
 
@@ -742,6 +794,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
           fileMenu={{
             recentProjects,
             onSave: () => void saveWorkspace("manual"),
+            onSaveAs: () => void saveWorkspace("manual", true),
             onAnalyzeNew: analyzeNewReplay,
             onOpen: openProject,
             onOpenRecent: openRecentProject,
@@ -756,6 +809,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
            onReset={() => {
              setAndSaveLayout(DEFAULT_LAYOUT);
              setAndSaveTablePreferences(DEFAULT_TABLE_PREFERENCES);
+             setLayoutResetVersion((version) => version + 1);
            }}
         />
         {projectError && (
@@ -767,7 +821,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
 
         <div className="h-[calc(min(50vh,640px)/0.24)] shrink-0">
         <ResizablePanelGroup
-          key={`vertical-${JSON.stringify(layout.vertical)}`}
+          key={`vertical-reset-${layoutResetVersion}`}
           orientation="vertical"
           defaultLayout={layout.vertical}
           onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, vertical: sizes })}
@@ -784,10 +838,11 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
                   playbackRate={playbackRate}
                   volume={volume}
                   seekRequest={seekRequest}
+                  initialTime={currentTime}
                   onTimeUpdate={setCurrentTime}
                   onDurationChange={(duration) => { if (Number.isFinite(duration) && duration > 0) setVideoDuration(duration); }}
                   onEnded={() => setIsPlaying(false)}
-                  onError={(message) => { setIsPlaying(false); setProjectError(message); }}
+                  onError={(message) => { setIsPlaying(false); setVideoPlaybackError(message); }}
                 />
               ) : null}
               isPlaying={isPlaying}
@@ -795,6 +850,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
               volume={volume}
               replay={replay}
               isVideoMissing={isVideoMissing}
+              videoPlaybackError={videoPlaybackError}
               redownloadProgress={redownloadProgress}
               canRedownload={canDownloadVideos()}
               onRelinkVideo={handleRelinkVideo}
@@ -809,7 +865,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
           <ResizableHandle aria-label="Resize video and review" className={VERTICAL_HANDLE_CLASS}><span aria-hidden className="h-1 w-12 rounded-full bg-muted-foreground/50 group-hover:bg-primary-foreground/70" /></ResizableHandle>
           <ResizablePanel id="review" minSize={580}>
             <ResizablePanelGroup
-              key={`review-${JSON.stringify(layout.review)}-${layout.notesVisible}-${layout.filtersVisible}`}
+              key={`review-${layoutResetVersion}-${layout.notesVisible}-${layout.filtersVisible}`}
               orientation="vertical"
               defaultLayout={layout.review}
               onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, review: sizes })}
@@ -843,7 +899,7 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
                 <div className="h-full min-h-0 border-t border-border">
                   {layout.filtersVisible ? (
                     <ResizablePanelGroup
-                      key={`lower-${JSON.stringify(layout.lower)}-${layout.isSwapped}`}
+                      key={`lower-${layoutResetVersion}-${layout.isSwapped}`}
                       orientation="horizontal"
                       defaultLayout={layout.lower}
                       onLayoutChanged={(sizes) => setAndSaveLayout({ ...layout, lower: sizes })}
@@ -877,13 +933,11 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
         <ManualEventDialog
           open={isManualEventOpen}
           timestamp={currentTime}
-          eventType={manualEventType}
           note={manualNote}
-          selectedTags={manualTags}
+          selections={manualSelections}
           onOpenChange={setIsManualEventOpen}
-          onEventTypeChange={setManualEventType}
           onNoteChange={setManualNote}
-          onTagsChange={setManualTags}
+          onSelectionsChange={setManualSelections}
           onSave={addManualEvent}
         />
         <ShortcutsDialog open={isShortcutsOpen} onOpenChange={setIsShortcutsOpen} />
@@ -894,27 +948,73 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
           onDiscard={confirmDiscard}
           onCancel={confirmCancel}
         />
+        <SaveChoiceDialog open={savePrompt === "choice"} onAnswer={answerSavePrompt} />
+        <SaveFailedDialog open={savePrompt === "failed"} onAnswer={answerSavePrompt} />
         <input ref={fileInputRef} type="file" accept={`${PROJECT_FILE_EXTENSION},application/json`} className="hidden" aria-label="Open project file" data-testid="project-file-input" onChange={(event) => void onProjectFileChosen(event)} />
       </main>
     </TooltipProvider>
   );
 }
 
+type SavePromptKind = "choice" | "failed";
+type SavePromptAnswer = "overwrite" | "copy" | "cancel";
+
+/** Asked before writing over an existing file: overwrite it, or save a new copy. */
+function SaveChoiceDialog({ open, onAnswer }: { open: boolean; onAnswer: (answer: SavePromptAnswer) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onAnswer("cancel"); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Save Project</DialogTitle>
+          <DialogDescription>Would you like to overwrite your previous file or save as a new copy?</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" onClick={() => onAnswer("cancel")}>Cancel</Button>
+          <Button variant="outline" onClick={() => onAnswer("copy")}>Save as New Copy</Button>
+          <Button onClick={() => onAnswer("overwrite")}>Overwrite</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Shown when the original file could not be written over. */
+function SaveFailedDialog({ open, onAnswer }: { open: boolean; onAnswer: (answer: SavePromptAnswer) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onAnswer("cancel"); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Save failed</DialogTitle>
+          <DialogDescription>Save failed: would you like to save as a new copy?</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onAnswer("cancel")}>Cancel</Button>
+          <Button onClick={() => onAnswer("copy")}>Yes</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface FileMenuActions {
   recentProjects: RecentProject[];
   onSave: () => void;
+  onSaveAs: () => void;
   onAnalyzeNew: () => void;
   onOpen: () => void;
   onOpenRecent: (project: RecentProject) => void;
 }
 
-function FileMenu({ recentProjects, onSave, onAnalyzeNew, onOpen, onOpenRecent }: FileMenuActions) {
-  const shortcut = typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "⌘S" : "Ctrl+S";
+function FileMenu({ recentProjects, onSave, onSaveAs, onAnalyzeNew, onOpen, onOpenRecent }: FileMenuActions) {
+  const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+  const saveShortcut = isMac ? "⌘S" : "Ctrl+S";
+  const saveAsShortcut = isMac ? "⌘⇧S" : "Ctrl+Shift+S";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" aria-label="File menu">File</Button></DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuItem onSelect={onSave}><Save /> Save<DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onSelect={onSave}><Save /> Save<DropdownMenuShortcut>{saveShortcut}</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onSelect={onSaveAs}><Save /> Save As…<DropdownMenuShortcut>{saveAsShortcut}</DropdownMenuShortcut></DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onAnalyzeNew}><FilePlus /> Analyze New Replay</DropdownMenuItem>
         <DropdownMenuItem onSelect={onOpen}><FolderOpen /> Open</DropdownMenuItem>
@@ -983,18 +1083,20 @@ const SHORTCUT_SECTIONS: ShortcutSection[] = [
   {
     title: "Table & Editing",
     shortcuts: [
+      { description: "Navigate cells", keys: ["Arrows / WASD"] },
       { description: "Add manual event", keys: ["Ctrl", "E"] },
       { description: "Undo change", keys: ["Ctrl", "Z"] },
       { description: "Redo change", keys: ["Ctrl", "Shift", "Z"] },
       { description: "Multi-column sort", keys: ["Shift", "Click Header"] },
       { description: "Save project", keys: ["Ctrl", "S"] },
+      { description: "Save project as", keys: ["Ctrl", "Shift", "S"] },
     ],
   },
   {
     title: "Manual Event Dialog",
     shortcuts: [
       { description: "Save event", keys: ["Ctrl", "Enter"] },
-      { description: "Navigate tags", keys: ["Arrow Keys"] },
+      { description: "Navigate tags", keys: ["Arrows / WASD"] },
       { description: "Toggle selected tag", keys: ["Shift", "Space"] },
       { description: "Cancel / Close", keys: ["Esc"] },
     ],
@@ -1115,7 +1217,7 @@ function IconTip({ label, onClick, children }: { label: string; onClick: () => v
   );
 }
 
-function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, redownloadProgress, canRedownload, onRelinkVideo, onRedownload, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
+function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRate, volume, controlsVisible, replay, isVideoMissing, videoPlaybackError, redownloadProgress, canRedownload, onRelinkVideo, onRedownload, onPlayToggle, onSeek, onVolumeChange, onPlaybackRateChange }: {
   currentTime: number;
   duration: number;
   /** Only the imported replay is displayed; no sample still frame is used. */
@@ -1126,6 +1228,7 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
   controlsVisible: boolean;
   replay: ProjectReplayInfo;
   isVideoMissing: boolean;
+  videoPlaybackError: string | null;
   /** Percent while a re-download runs, otherwise null. */
   redownloadProgress: number | null;
   canRedownload: boolean;
@@ -1156,17 +1259,20 @@ function VideoReviewPanel({ currentTime, duration, media, isPlaying, playbackRat
   return (
     <section ref={playerRef} aria-label="Video player" className="relative flex h-full min-h-0 flex-col items-center justify-center overflow-hidden bg-video-letterbox fullscreen:h-screen">
       <div className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden">
-      {isVideoMissing || !media ? (
+      {/* The player stays mounted (hidden) during an error so its message isn't lost on re-render. */}
+      {videoPlaybackError && media && <div className="hidden">{media}</div>}
+      {isVideoMissing || !media || videoPlaybackError ? (
         <div role="status" className="flex aspect-video h-full max-w-full flex-col items-center justify-center gap-2 border border-dashed border-border bg-card/60 p-6 text-center">
           <VideoOff className="size-8 text-muted-foreground" aria-hidden />
-          <p className="font-display text-lg font-semibold">No Video Found</p>
-          {replay.videoPath && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Missing file: {replay.videoPath}</p>}
+          <p className="font-display text-lg font-semibold">{videoPlaybackError ? "Video Can't Be Played" : "No Video Found"}</p>
+          {videoPlaybackError && <p className="max-w-md text-xs text-destructive">{videoPlaybackError}</p>}
+          {replay.videoPath && !videoPlaybackError && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Missing file: {replay.videoPath}</p>}
           {replay.originalUrl && <p className="max-w-md break-all font-mono text-xs text-muted-foreground">Original URL: {replay.originalUrl}</p>}
           <p className="text-xs text-muted-foreground">Events, tags, filters, and notes are still available for review.</p>
           <input
             ref={relinkInputRef}
             type="file"
-            accept="video/*"
+            accept="video/*,.mp4,.webm,.mov,.mkv,.m4v"
             className="hidden"
             aria-hidden
             tabIndex={-1}
@@ -1292,7 +1398,7 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
     setActiveCell({ rowId, columnId });
     onSelectRow(rowId);
     if (isCellItself) setIsCellEditing(false);
-    else if (columnId === "note" || columnId === "eventType") { setIsCellEditing(true); onBeginCellSession(); }
+    else if (columnId === "note") { setIsCellEditing(true); onBeginCellSession(); }
   };
   const endCellEdit = (refocusCell: boolean) => {
     setIsCellEditing(false);
@@ -1309,8 +1415,13 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
     if (keyEvent.ctrlKey || keyEvent.metaKey || keyEvent.altKey) return;
     const rowIndex = events.findIndex((event) => event.id === rowId);
     const columnIndex = visibleColumns.findIndex((column) => column.id === columnId);
-    const moves: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
-    const move = moves[keyEvent.key];
+    const moves: Record<string, [number, number]> = {
+      ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+      w: [-1, 0], W: [-1, 0], s: [1, 0], S: [1, 0], a: [0, -1], A: [0, -1], d: [0, 1], D: [0, 1],
+    };
+    const isTypingTarget = keyEvent.target instanceof HTMLInputElement || keyEvent.target instanceof HTMLTextAreaElement;
+    const isLetterKey = keyEvent.key.length === 1;
+    const move = isTypingTarget && isLetterKey ? undefined : moves[keyEvent.key];
     if (move) {
       keyEvent.preventDefault();
       const nextRow = events[Math.min(events.length - 1, Math.max(0, rowIndex + move[0]))];
@@ -1377,8 +1488,8 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
                     if (draggedColumnId) onTablePreferencesChange({ ...tablePreferences, order: reorderTableColumns(tablePreferences.order, draggedColumnId, column.id) });
                     setDraggedColumnId(null);
                   }}
-                  tagsFilter={filters.selectedTags ?? []}
-                  onTagsFilterChange={(tags) => onFiltersChange({ ...filters, selectedTags: tags })}
+                  filters={filters}
+                  onFiltersChange={onFiltersChange}
                 />
               ))}
               <th className="w-12"><span className="sr-only">Actions</span></th>
@@ -1418,16 +1529,20 @@ function EventTablePanel({ events, totalCount, selectedEventId, filters, tablePr
   );
 }
 
-function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, tagsFilter, onTagsFilterChange }: {
+function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, filters, onFiltersChange }: {
   column: TableColumnDefinition;
   sorts: SortRule[];
   onSort: (key: SortKey, additive: boolean) => void;
   onResize: (startX: number) => void;
   onDragStart: () => void;
   onDrop: () => void;
-  tagsFilter: string[];
-  onTagsFilterChange: (tags: string[]) => void;
+  filters: EventFilters;
+  onFiltersChange: (filters: EventFilters) => void;
 }) {
+  // Gamestate, My position and Tags all get the same chip filter popover.
+  const multiSelect = isMultiSelectField(column.id) ? MULTI_SELECT_FIELDS[column.id] : null;
+  const activeFilter = multiSelect ? filters[multiSelect.filterKey] ?? [] : [];
+  const setActiveFilter = (next: string[]) => { if (multiSelect) onFiltersChange({ ...filters, [multiSelect.filterKey]: next }); };
   const sortIndex = column.sortKey ? sorts.findIndex((sort) => sort.key === column.sortKey) : -1;
   const activeSort = sortIndex >= 0 ? sorts[sortIndex] : undefined;
   return (
@@ -1441,38 +1556,38 @@ function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, tag
     >
       <div className="flex min-w-0 items-center">
         <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground/60" aria-hidden />
-        {column.id === "tags" ? (
+        {multiSelect ? (
           <Popover>
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"
                 size="sm"
-                aria-label="Filter by tags"
-                className={cn("h-7 min-w-0 flex-1 justify-start px-1 text-xs text-muted-foreground", tagsFilter.length > 0 && "text-primary")}
+                aria-label={`Filter by ${column.label}`}
+                className={cn("h-7 min-w-0 flex-1 justify-start px-1 text-xs text-muted-foreground", activeFilter.length > 0 && "text-primary")}
               >
                 <span className="truncate">{column.label}</span>
-                {tagsFilter.length > 0 && <span className="font-mono text-[9px]">{tagsFilter.length}</span>}
+                {activeFilter.length > 0 && <span className="font-mono text-[9px]">{activeFilter.length}</span>}
               </Button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-56 border-border bg-card p-3">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Show events tagged with</p>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Show events with {column.label.toLowerCase()}</p>
               <div className="flex flex-wrap gap-1.5">
-                {STARTER_TAGS.map((tag) => (
+                {multiSelect.options.map((tag) => (
                   <Button
                     key={tag}
                     type="button"
-                    variant={tagsFilter.includes(tag) ? "default" : "outline"}
-                    aria-pressed={tagsFilter.includes(tag)}
+                    variant={activeFilter.includes(tag) ? "default" : "outline"}
+                    aria-pressed={activeFilter.includes(tag)}
                     size="sm"
                     className="h-6 px-1.5 text-[10px]"
-                    onClick={() => onTagsFilterChange(tagsFilter.includes(tag) ? tagsFilter.filter((t) => t !== tag) : [...tagsFilter, tag])}
+                    onClick={() => setActiveFilter(toggleOption(activeFilter, tag))}
                   >
                     {tag}
                   </Button>
                 ))}
               </div>
-              {tagsFilter.length > 0 && (
-                <Button variant="ghost" size="sm" className="mt-2 h-6 px-1.5 text-[10px]" onClick={() => onTagsFilterChange([])}>
+              {activeFilter.length > 0 && (
+                <Button variant="ghost" size="sm" className="mt-2 h-6 px-1.5 text-[10px]" onClick={() => setActiveFilter([])}>
                   <X /> Clear
                 </Button>
               )}
@@ -1492,14 +1607,14 @@ function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, tag
 const CHARACTER_SUGGESTIONS = ["Mario", "Pikachu", "Fox", "Falco", "Marth", "Lucina", "Joker", "Steve", "Sonic", "Cloud", "Pyra/Mythra", "Roy", "Wolf", "Snake", "Peach", "Palutena", "Inkling", "Mr. Game & Watch"];
 
 /** Controlled click-to-edit text cell: Enter/blur commits, Escape cancels. */
-function InlineTextCell({ display, initialValue, label, listId, inputClassName, editing, onStartEdit, onEndEdit, onCommit }: { display: React.ReactNode; initialValue: string; label: string; listId?: string; inputClassName?: string; editing: boolean; onStartEdit: () => void; onEndEdit: (refocusCell: boolean) => void; onCommit: (value: string) => void }) {
+function InlineTextCell({ display, initialValue, label, listId, inputClassName, sanitize, editing, onStartEdit, onEndEdit, onCommit }: { display: React.ReactNode; initialValue: string; label: string; listId?: string; inputClassName?: string; sanitize?: (value: string) => string; editing: boolean; onStartEdit: () => void; onEndEdit: (refocusCell: boolean) => void; onCommit: (value: string) => void }) {
   if (!editing) {
     return <button type="button" aria-label={`Edit ${label}`} onClick={onStartEdit} className="w-full min-w-0 truncate rounded border border-transparent px-2 py-1 text-left hover:border-border">{display}</button>;
   }
-  return <InlineTextEditor initialValue={initialValue} label={label} listId={listId} inputClassName={inputClassName} onEndEdit={onEndEdit} onCommit={onCommit} />;
+  return <InlineTextEditor initialValue={initialValue} label={label} listId={listId} inputClassName={inputClassName} sanitize={sanitize} onEndEdit={onEndEdit} onCommit={onCommit} />;
 }
 
-function InlineTextEditor({ initialValue, label, listId, inputClassName, onEndEdit, onCommit }: { initialValue: string; label: string; listId?: string | undefined; inputClassName?: string | undefined; onEndEdit: (refocusCell: boolean) => void; onCommit: (value: string) => void }) {
+function InlineTextEditor({ initialValue, label, listId, inputClassName, sanitize, onEndEdit, onCommit }: { initialValue: string; label: string; listId?: string | undefined; inputClassName?: string | undefined; sanitize?: ((value: string) => string) | undefined; onEndEdit: (refocusCell: boolean) => void; onCommit: (value: string) => void }) {
   const [draft, setDraft] = useState(initialValue);
   const finishedRef = useRef(false);
   const finish = (commit: boolean, refocusCell: boolean) => {
@@ -1509,8 +1624,8 @@ function InlineTextEditor({ initialValue, label, listId, inputClassName, onEndEd
     onEndEdit(refocusCell);
   };
   return (
-    <input autoFocus aria-label={label} list={listId} value={draft} onChange={(changeEvent) => setDraft(changeEvent.target.value)} onBlur={() => finish(true, false)}
-      onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); finish(true, true); } else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); finish(false, true); } }}
+    <input autoFocus aria-label={label} list={listId} inputMode={sanitize ? "numeric" : undefined} value={draft} onChange={(changeEvent) => setDraft(sanitize ? sanitize(changeEvent.target.value) : changeEvent.target.value)} onBlur={() => finish(true, false)}
+      onKeyDown={(keyEvent) => { const key = sanitize ? handleTimestampArrowKey(keyEvent) : keyEvent.key; if (key === "Enter") { keyEvent.preventDefault(); finish(true, true); } else if (key === "Escape") { keyEvent.preventDefault(); finish(false, true); } }}
       className={cn("h-7 w-full min-w-0 rounded border border-primary bg-input/40 px-2 text-xs outline-none", inputClassName)} />
   );
 }
@@ -1537,34 +1652,26 @@ interface CellEditingProps {
 
 function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBeginTextEdit, onCommitTextEdit, activeColumnId, isEditing, registerCell, onCellFocus, onCellKeyDown, onStartEdit, onEndEdit, onCancelCellEdit }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>, mode?: "action" | "text") => void; onDelete: () => void; onBeginTextEdit: () => void; onCommitTextEdit: () => void } & CellEditingProps) {
   const isCellEditing = (columnId: TableColumnId) => isEditing && activeColumnId === columnId;
-  const selectRef = useFocusWhenEditing<HTMLSelectElement>(isCellEditing("eventType"));
   const noteRef = useFocusWhenEditing<HTMLInputElement>(isCellEditing("note"));
-  const originalEventTypeRef = useRef(event.eventType);
   const originalNoteRef = useRef(event.note);
   const textCellProps = (columnId: TableColumnId) => ({ editing: isCellEditing(columnId), onStartEdit: () => onStartEdit(columnId), onEndEdit });
   const cellForColumn = (columnId: TableColumnId) => {
     switch (columnId) {
-      case "eventType": return (
-        <select ref={selectRef} aria-label={`Event type at ${formatTimestamp(event.timestamp)}`} value={event.eventType} onChange={(changeEvent) => onUpdate({ eventType: changeEvent.target.value as AnalysisEventType })}
-          onFocus={() => { originalEventTypeRef.current = event.eventType; }}
-          onBlur={() => onEndEdit(false)}
-          onKeyDown={(keyEvent) => {
-            if (keyEvent.key === "Enter") { keyEvent.preventDefault(); onEndEdit(true); }
-            else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); if (event.eventType !== originalEventTypeRef.current) onUpdate({ eventType: originalEventTypeRef.current }); onEndEdit(true); }
-          }}
-          className={cn("h-7 w-full min-w-0 cursor-pointer rounded border border-transparent bg-transparent px-1 text-xs font-medium outline-none hover:border-border focus:border-primary", event.eventType === "Hit Received" && "text-destructive", event.eventType === "Hit Dealt" && "text-success")}>
-          {ALL_EVENT_TYPES.map((type) => <option key={type} value={type} className="bg-card text-foreground">{type}</option>)}
-        </select>
-      );
+      // Gamestate, My position and Tags share one chip editor.
+      case "gamestate":
+      case "position":
+      case "tags": {
+        const config = MULTI_SELECT_FIELDS[columnId];
+        return <InlineTagList values={event[columnId]} options={config.options} placeholder={config.placeholder} ariaLabel={`Edit ${config.label.toLowerCase()}`} editing={isCellEditing(columnId)} onStartEdit={() => onStartEdit(columnId)} onEndEdit={onEndEdit} onCancel={onCancelCellEdit} onChange={(next) => onUpdate({ [columnId]: next })} />;
+      }
       case "character": return <InlineTextCell {...textCellProps("character")} label={`character at ${formatTimestamp(event.timestamp)}`} listId="character-suggestions" initialValue={event.character ?? ""} display={<span className="text-muted-foreground">{event.character ?? "—"}</span>} onCommit={(value) => onUpdate({ character: parseCharacterInput(value) })} />;
       case "timestamp": return (
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" className="size-7 shrink-0 text-primary" onClick={onJump} aria-label={`Jump to ${formatTimestamp(event.timestamp)}`}><Play /></Button>
-          <InlineTextCell {...textCellProps("timestamp")} label={`timestamp at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={formatTimestamp(event.timestamp)} display={<span className="font-mono text-primary">{formatTimestamp(event.timestamp)}</span>} onCommit={(value) => { const seconds = parseTimestampInput(value); if (seconds !== null) onUpdate({ timestamp: seconds }); }} />
+          <InlineTextCell {...textCellProps("timestamp")} sanitize={sanitizeTimestampInput} label={`timestamp at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={formatTimestamp(event.timestamp)} display={<span className="font-mono text-primary">{formatTimestamp(event.timestamp)}</span>} onCommit={(value) => { const seconds = parseTimestampInput(value); if (seconds !== null) onUpdate({ timestamp: seconds }); }} />
         </div>
       );
       case "damage": return <InlineTextCell {...textCellProps("damage")} label={`damage at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={event.damage === null ? "" : event.damage.toFixed(1)} display={<span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>} onCommit={(value) => onUpdate({ damage: parseDamageInput(value) })} />;
-      case "tags": return <InlineTags tags={event.tags} editing={isCellEditing("tags")} onStartEdit={() => onStartEdit("tags")} onEndEdit={onEndEdit} onCancel={onCancelCellEdit} onChange={(tags) => onUpdate({ tags })} />;
       case "note": return <input ref={noteRef} aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true"
         onFocus={() => { originalNoteRef.current = event.note; onBeginTextEdit(); }}
         onBlur={() => { onCommitTextEdit(); onEndEdit(false); }}
@@ -1596,7 +1703,21 @@ function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBegi
 }
 
 /** Table tagger: arrows navigate (shared with Add Event), Shift toggles the focused tag, Enter saves, Escape discards. */
-function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange }: { tags: string[]; editing: boolean; onStartEdit: () => void; onEndEdit: (refocusCell: boolean) => void; onCancel: () => void; onChange: (tags: string[]) => void }) {
+interface InlineTagListProps {
+  values: string[];
+  options: readonly string[];
+  placeholder: string;
+  editing: boolean;
+  ariaLabel: string;
+  onStartEdit: () => void;
+  onEndEdit: (refocusCell: boolean) => void;
+  onCancel: () => void;
+  onChange: (next: string[]) => void;
+}
+
+/** Reusable chip editor for any multi-select column (Gamestate, My position, Tags). */
+function InlineTagList({ values, options, placeholder, editing, ariaLabel, onStartEdit, onEndEdit, onCancel, onChange }: InlineTagListProps) {
+  const tags = values;
   const editorRef = useRef<HTMLDivElement>(null);
   const tagRefs = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => {
@@ -1610,9 +1731,9 @@ function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
   const toggleTag = (index: number) => {
-    const tag = STARTER_TAGS[index];
+    const tag = options[index];
     if (!tag) return;
-    onChange(tags.includes(tag) ? tags.filter((item) => item !== tag) : [...tags, tag]);
+    onChange(toggleOption(tags, tag));
   };
   const onTagKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     // Toggle on the press itself so the tag flips with no perceptible delay.
@@ -1622,7 +1743,7 @@ function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange 
       if (!keyEvent.repeat) toggleTag(index);
       return;
     }
-    const result = navigateTagGrid(keyEvent.key, readGridPositions(tagRefs.current.slice(0, STARTER_TAGS.length)), index);
+    const result = navigateTagGrid(keyEvent.key, readGridPositions(tagRefs.current.slice(0, options.length)), index);
     if (result === null) return;
     keyEvent.preventDefault();
     if (typeof result === "number") tagRefs.current[result]?.focus();
@@ -1635,14 +1756,14 @@ function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange 
         if (keyEvent.key === "Enter") { keyEvent.preventDefault(); keyEvent.stopPropagation(); onEndEdit(true); }
         else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); keyEvent.stopPropagation(); onCancel(); }
       }}>
-      {STARTER_TAGS.map((tag, index) => (
+      {options.map((tag, index) => (
         <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} variant={tags.includes(tag) ? "default" : "ghost"} aria-pressed={tags.includes(tag)} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => toggleTag(index)}>{tag}</Button>
       ))}
-      <Button variant="ghost" size="icon" className="size-6" onClick={() => onEndEdit(true)} aria-label="Close tag editor"><X /></Button>
+      <Button variant="ghost" size="icon" className="size-6" onClick={() => onEndEdit(true)} aria-label={`Close ${ariaLabel.replace(/^Edit /, "")} editor`}><X /></Button>
     </div>
   ) : (
-    <Button variant="ghost" className="h-auto min-h-7 w-full justify-start whitespace-normal px-1 py-1" onClick={onStartEdit} aria-label="Edit tags">
-      <span className="flex flex-wrap gap-1">{tags.length ? tags.map((tag) => <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px]">{tag}</Badge>) : <span className="text-muted-foreground">Add tags</span>}</span>
+    <Button variant="ghost" className="h-auto min-h-7 w-full justify-start whitespace-normal px-1 py-1" onClick={onStartEdit} aria-label={ariaLabel}>
+      <span className="flex flex-wrap gap-1">{tags.length ? tags.map((tag) => <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px]">{tag}</Badge>) : <span className="text-xs text-muted-foreground">{placeholder}</span>}</span>
     </Button>
   );
 }
@@ -1650,7 +1771,6 @@ function InlineTags({ tags, editing, onStartEdit, onEndEdit, onCancel, onChange 
 function NotesPanel({ notes, onChange, onCommit, textareaRef }: { notes: string; onChange: (value: string) => void; onCommit: () => void; textareaRef: Ref<HTMLTextAreaElement> }) {
   const saveNotes = (value: string) => {
     onChange(value);
-    if (typeof window !== "undefined") window.localStorage.setItem(NOTES_KEY, value);
   };
   return (
     <section className="flex h-full min-h-0 flex-col bg-card/40 p-4">
@@ -1665,9 +1785,8 @@ function NotesPanel({ notes, onChange, onCommit, textareaRef }: { notes: string;
 
 function FilterPanel({ filters, events, onChange }: { filters: EventFilters; events: AnalysisEvent[]; onChange: (filters: EventFilters) => void }) {
   const quickFilters: { value: QuickFilter; label: string }[] = [
-    { value: "received", label: "Hits Received" }, { value: "dealt", label: "Hits Dealt" }, { value: "manual", label: "Manual Events" }, { value: "untagged", label: "Untagged" }, { value: "high-damage", label: "High Damage" },
+    { value: "untagged", label: "Untagged" }, { value: "high-damage", label: "High Damage" },
   ];
-  const eventTypes = Array.from(new Set(events.map((event) => event.eventType)));
   const characters = Array.from(new Set(events.map((event) => event.character).filter((character): character is string => Boolean(character))));
   return (
     <section className="h-full min-h-0 overflow-auto bg-card/20 p-4">
@@ -1679,9 +1798,8 @@ function FilterPanel({ filters, events, onChange }: { filters: EventFilters; eve
         {quickFilters.map((quick) => <Button key={quick.value} variant={filters.quickFilter === quick.value ? "secondary" : "outline"} size="sm" className="h-7 px-2 text-[11px]" onClick={() => onChange({ ...filters, quickFilter: filters.quickFilter === quick.value ? "all" : quick.value })}>{quick.label}</Button>)}
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <FilterSelect label="Event type" value={filters.eventType} options={eventTypes} onChange={(value) => onChange({ ...filters, eventType: value })} />
         <FilterSelect label="Character" value={filters.character} options={characters} onChange={(value) => onChange({ ...filters, character: value })} />
-        <FilterSelect label="Tag" value={filters.tag} options={STARTER_TAGS} onChange={(value) => onChange({ ...filters, tag: value })} />
+        <FilterSelect label="Tag" value={filters.tag} options={[...TAG_OPTIONS]} onChange={(value) => onChange({ ...filters, tag: value })} />
         <NumberFilter label="Min damage %" value={filters.minDamage} onChange={(value) => onChange({ ...filters, minDamage: value })} />
         <NumberFilter label="Max damage %" value={filters.maxDamage === 999 ? 50 : filters.maxDamage} onChange={(value) => onChange({ ...filters, maxDamage: value })} />
         <NumberFilter label="Min time since hit" value={filters.minElapsed} onChange={(value) => onChange({ ...filters, minElapsed: value })} />
@@ -1698,16 +1816,20 @@ function NumberFilter({ label, value, onChange }: { label: string; value: number
   return <label className="text-[10px] font-medium uppercase text-muted-foreground">{label}<Input type="number" min={0} value={value} onChange={(event) => onChange(Number(event.target.value))} className="mt-1 h-8 text-xs" /></label>;
 }
 
-function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onOpenChange, onEventTypeChange, onNoteChange, onTagsChange, onSave }: {
+const CHIP_GRID_CLASS: Partial<Record<MultiSelectField, string>> = {
+  gamestate: "grid grid-cols-4 gap-1.5",
+  position: "grid grid-cols-3 gap-1.5",
+  tags: "grid grid-cols-3 gap-1.5",
+};
+
+function ManualEventDialog({ open, timestamp, note, selections, onOpenChange, onNoteChange, onSelectionsChange, onSave }: {
   open: boolean;
   timestamp: number;
-  eventType: AnalysisEventType;
   note: string;
-  selectedTags: string[];
+  selections: Record<MultiSelectField, string[]>;
   onOpenChange: (open: boolean) => void;
-  onEventTypeChange: (eventType: AnalysisEventType) => void;
   onNoteChange: (note: string) => void;
-  onTagsChange: (tags: string[]) => void;
+  onSelectionsChange: (selections: Record<MultiSelectField, string[]>) => void;
   onSave: (timestamp: number) => void;
 }) {
   const [draftTimestamp, setDraftTimestamp] = useState(() => formatTimestamp(timestamp));
@@ -1716,126 +1838,49 @@ function ManualEventDialog({ open, timestamp, eventType, note, selectedTags, onO
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const handleSave = () => onSave(parseTimestampInput(draftTimestamp) ?? Math.floor(timestamp));
-  const eventTypeRef = useRef<HTMLButtonElement>(null);
+  const timestampRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
-  const tagRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const focusTag = (index: number) => tagRefs.current[index]?.focus();
-  const toggleTag = (index: number) => {
-    const tag = STARTER_TAGS[index];
-    if (!tag) return;
-    onTagsChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag]);
+  // One flat list of every chip across the three groups, so arrow keys move between groups naturally.
+  const chips = MULTI_SELECT_FIELD_IDS.flatMap((field) => MULTI_SELECT_FIELDS[field].options.map((option) => ({ field, option })));
+  const chipRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const focusChip = (index: number) => chipRefs.current[index]?.focus();
+  const toggleChip = (index: number) => {
+    const chip = chips[index];
+    if (!chip) return;
+    onSelectionsChange({ ...selections, [chip.field]: toggleOption(selections[chip.field], chip.option) });
   };
-  const onTagKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-    // Toggle on the press itself so the tag flips with no perceptible delay.
-    if (keyEvent.key === "Shift") {
-      if (!keyEvent.repeat) toggleTag(index);
+  const onChipKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    // Toggle on the press itself so the chip flips with no perceptible delay.
+    if (keyEvent.key === "Shift" || keyEvent.key === " " || keyEvent.key === "Spacebar") {
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      if (!keyEvent.repeat) toggleChip(index);
       return;
     }
-    const result = navigateTagGrid(keyEvent.key, readGridPositions(tagRefs.current), index);
+    const result = navigateTagGrid(keyEvent.key, readGridPositions(chipRefs.current.slice(0, chips.length)), index);
     if (result === null) return;
     keyEvent.preventDefault();
-    if (result === "before") eventTypeRef.current?.focus();
+    if (result === "before") timestampRef.current?.focus();
     else if (result === "after") noteRef.current?.focus();
-    else focusTag(result);
+    else focusChip(result);
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-card max-w-xl" onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter" && (keyEvent.ctrlKey || keyEvent.metaKey)) { keyEvent.preventDefault(); handleSave(); } }}>
         <DialogHeader><DialogTitle>Add manual event</DialogTitle><DialogDescription>Capture a meaningful moment at the current playhead.</DialogDescription></DialogHeader>
         <div className="grid gap-4 py-2">
-          <div className="grid grid-cols-[120px_1fr] gap-3">
-            <label className="text-xs font-medium text-muted-foreground">Timestamp<Input value={draftTimestamp} onChange={(changeEvent) => setDraftTimestamp(changeEvent.target.value)} onBlur={() => { if (draftTimestamp.trim()) setDraftTimestamp(formatTimestampString(draftTimestamp)); }} onKeyDown={(keyEvent) => { if (keyEvent.key === "Enter") { keyEvent.preventDefault(); keyEvent.stopPropagation(); /* Enter tidies the time just like clicking away */ if (draftTimestamp.trim()) setDraftTimestamp(formatTimestampString(draftTimestamp)); } }} placeholder={formatTimestamp(timestamp)} aria-label="Event timestamp" className="mt-1 font-mono" /></label>
-            <div className="text-xs font-medium text-muted-foreground"><span id="manual-event-type-label">Event type</span><EventTypeListbox triggerRef={eventTypeRef} value={eventType} onChange={onEventTypeChange} onArrowDownWhenClosed={() => focusTag(0)} /></div>
-          </div>
-           <fieldset><legend className="mb-2 text-xs font-medium text-muted-foreground">Tags</legend><div className="flex flex-wrap gap-1.5">{STARTER_TAGS.map((tag, index) => <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} type="button" variant={selectedTags.includes(tag) ? "default" : "outline"} aria-pressed={selectedTags.includes(tag)} size="sm" onClick={() => toggleTag(index)}>{tag}</Button>)}</div></fieldset>
-          <label className="text-xs font-medium text-muted-foreground">Event note<Textarea ref={noteRef} aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} onKeyDown={(keyEvent) => { const target = keyEvent.currentTarget; if (keyEvent.key === "ArrowUp" && target.selectionStart === 0 && target.selectionEnd === 0) { keyEvent.preventDefault(); focusTag(STARTER_TAGS.length - 1); } }} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
+          <label className="w-32 text-xs font-medium text-muted-foreground">Timestamp<Input ref={timestampRef} inputMode="numeric" value={draftTimestamp} onChange={(changeEvent) => setDraftTimestamp(sanitizeTimestampInput(changeEvent.target.value))} onBlur={() => { if (draftTimestamp.trim()) setDraftTimestamp(formatTimestampString(draftTimestamp)); }} onKeyDown={(keyEvent) => { const key = handleTimestampArrowKey(keyEvent); if (key === "Enter" && !keyEvent.ctrlKey && !keyEvent.metaKey) { keyEvent.preventDefault(); keyEvent.stopPropagation(); /* Enter tidies the time just like clicking away */ if (draftTimestamp.trim()) setDraftTimestamp(formatTimestampString(draftTimestamp)); } else if (key === "ArrowDown") { keyEvent.preventDefault(); focusChip(0); } }} placeholder={formatTimestamp(timestamp)} aria-label="Event timestamp" className="mt-1 font-mono" /></label>
+          {MULTI_SELECT_FIELD_IDS.map((field) => (
+            <fieldset key={field}><legend className="mb-2 text-xs font-medium text-muted-foreground">{MULTI_SELECT_FIELDS[field].label}</legend><div className={CHIP_GRID_CLASS[field] ?? "flex flex-wrap gap-1.5"}>
+              {chips.map((chip, index) => chip.field !== field ? null : (
+                <Button key={chip.option} ref={(element) => { chipRefs.current[index] = element; }} onKeyDown={(keyEvent) => onChipKeyDown(keyEvent, index)} type="button" variant={selections[field].includes(chip.option) ? "default" : "outline"} aria-pressed={selections[field].includes(chip.option)} size="sm" className={CHIP_GRID_CLASS[field] ? "w-full min-w-0 whitespace-normal" : undefined} onClick={() => toggleChip(index)}>{chip.option}</Button>
+              ))}
+            </div></fieldset>
+          ))}
+          <label className="text-xs font-medium text-muted-foreground">Event note<Textarea ref={noteRef} aria-label="Event note" value={note} onChange={(event) => onNoteChange(event.target.value)} onKeyDown={(keyEvent) => { const target = keyEvent.currentTarget; if (keyEvent.key === "ArrowUp" && target.selectionStart === 0 && target.selectionEnd === 0) { keyEvent.preventDefault(); focusChip(chips.length - 1); } }} placeholder="What happened, and what should you do next time?" className="mt-1 min-h-24" /></label>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button onClick={handleSave} title="Ctrl+Enter / Cmd+Enter">Save event</Button></DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-/** Keyboard-friendly event type picker: Enter toggles the list, arrows change the type while open, ArrowDown leaves when closed. */
-function EventTypeListbox({ triggerRef, value, onChange, onArrowDownWhenClosed }: {
-  triggerRef: React.RefObject<HTMLButtonElement | null>;
-  value: AnalysisEventType;
-  onChange: (type: AnalysisEventType) => void;
-  onArrowDownWhenClosed: () => void;
-}) {
-  const [isListOpen, setIsListOpen] = useState(false);
-  const listRef = useRef<HTMLUListElement | null>(null);
-  const currentIndex = Math.max(0, MANUAL_EVENT_TYPES.indexOf(value));
-  const step = (offset: number) => {
-    const nextIndex = Math.min(MANUAL_EVENT_TYPES.length - 1, Math.max(0, currentIndex + offset));
-    const nextType = MANUAL_EVENT_TYPES[nextIndex];
-    if (nextType) onChange(nextType);
-  };
-  // Keep the highlighted option visible: once it passes the vertical midpoint of
-  // the list, scroll so it sits at the midpoint, revealing the upcoming options.
-  useEffect(() => {
-    if (!isListOpen) return;
-    const list = listRef.current;
-    const active = list?.querySelector<HTMLLIElement>('[aria-selected="true"]');
-    if (!list || !active) return;
-    const listRect = list.getBoundingClientRect();
-    const activeRect = active.getBoundingClientRect();
-    const optionOffset = activeRect.top - listRect.top + list.scrollTop;
-    const midpoint = list.clientHeight / 2;
-    if (optionOffset - list.scrollTop > midpoint) {
-      list.scrollTop = optionOffset - midpoint;
-    } else if (optionOffset < list.scrollTop + midpoint) {
-      list.scrollTop = Math.max(0, optionOffset - midpoint);
-    }
-  }, [isListOpen, value]);
-  const onKeyDown = (keyEvent: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (keyEvent.key === "Enter" && !keyEvent.ctrlKey && !keyEvent.metaKey) {
-      keyEvent.preventDefault();
-      setIsListOpen((open) => !open);
-    } else if (keyEvent.key === "Escape" && isListOpen) {
-      keyEvent.preventDefault();
-      keyEvent.stopPropagation();
-      setIsListOpen(false);
-    } else if (keyEvent.key === "ArrowDown") {
-      keyEvent.preventDefault();
-      if (isListOpen) step(1);
-      else onArrowDownWhenClosed();
-    } else if (keyEvent.key === "ArrowUp" && isListOpen) {
-      keyEvent.preventDefault();
-      step(-1);
-    }
-  };
-  return (
-    <div className="relative mt-1">
-      <button
-        ref={triggerRef}
-        type="button"
-        role="combobox"
-        aria-labelledby="manual-event-type-label"
-        aria-label="Event type"
-        aria-expanded={isListOpen}
-        aria-controls="manual-event-type-list"
-        onClick={() => setIsListOpen((open) => !open)}
-        onKeyDown={onKeyDown}
-        onBlur={() => setIsListOpen(false)}
-        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-left text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
-      >
-        <span>{value}</span><span aria-hidden="true" className="text-muted-foreground">▾</span>
-      </button>
-      {isListOpen && (
-        <ul ref={listRef} id="manual-event-type-list" role="listbox" aria-label="Event types" className="absolute z-50 mt-1 max-h-64 w-full overflow-auto rounded-md border border-border bg-popover py-1 text-sm text-popover-foreground shadow-md">
-          {MANUAL_EVENT_TYPES.map((type) => (
-            <li
-              key={type}
-              role="option"
-              aria-selected={type === value}
-              onMouseDown={(mouseEvent) => { mouseEvent.preventDefault(); onChange(type); setIsListOpen(false); }}
-              className={cn("cursor-pointer px-3 py-1.5", type === value ? "bg-accent text-accent-foreground" : "hover:bg-muted")}
-            >
-              {type}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }

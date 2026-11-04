@@ -1,4 +1,38 @@
 import { formatTimestamp } from "./analysisData";
+import type { KeyboardEvent } from "react";
+
+/** Keep time boxes free of letters, spaces and punctuation other than colons. */
+export function sanitizeTimestampInput(value: string): string {
+  return value.replace(/[^\d:]/g, "");
+}
+
+const WASD_TO_ARROW: Record<string, string> = { w: "ArrowUp", a: "ArrowLeft", s: "ArrowDown", d: "ArrowRight" };
+
+/** Translate gaming keys to arrows; all other keys stay unchanged. */
+export function toArrowKey(key: string): string {
+  return WASD_TO_ARROW[key.toLowerCase()] ?? key;
+}
+
+/** A typed letter cannot trigger the browser's normal arrow action, so move its caret ourselves. */
+export function handleTimestampArrowKey(event: KeyboardEvent<HTMLInputElement>): string {
+  if (event.ctrlKey || event.metaKey || event.altKey) return event.key;
+  const key = toArrowKey(event.key);
+  if (key === event.key) return key;
+  event.preventDefault();
+  const input = event.currentTarget;
+  const start = input.selectionStart ?? 0;
+  const end = input.selectionEnd ?? start;
+  const backwards = input.selectionDirection === "backward";
+  const caret = backwards ? start : end;
+  const next = key === "ArrowUp" ? 0 : key === "ArrowDown" ? input.value.length
+    : key === "ArrowLeft" ? Math.max(0, (event.shiftKey ? caret : start) - (event.shiftKey || start === end ? 1 : 0))
+    : Math.min(input.value.length, (event.shiftKey ? caret : end) + (event.shiftKey || start === end ? 1 : 0));
+  if (event.shiftKey) {
+    const anchor = backwards ? end : start;
+    input.setSelectionRange(Math.min(anchor, next), Math.max(anchor, next), next < anchor ? "backward" : "forward");
+  } else input.setSelectionRange(next, next);
+  return key;
+}
 
 /**
  * Reads typed digits from right to left: the last 2 are seconds, the 2 before are minutes,
@@ -97,10 +131,11 @@ export function handleArrowDown(positions: GridItemPosition[], current: number):
 /** Shared arrow-key navigation for tag grids (Add Event tagger and table tagger); null for non-arrow keys. */
 export function navigateTagGrid(key: string, positions: GridItemPosition[], current: number): GridNavigationResult | null {
   const count = positions.length;
-  if (key === "ArrowLeft") return handleArrowLeft(current, count);
-  if (key === "ArrowRight") return handleArrowRight(current, count);
-  if (key === "ArrowUp") return handleArrowUp(positions, current);
-  if (key === "ArrowDown") return handleArrowDown(positions, current);
+  const lowerKey = key.toLowerCase();
+  if (key === "ArrowLeft" || lowerKey === "a") return handleArrowLeft(current, count);
+  if (key === "ArrowRight" || lowerKey === "d") return handleArrowRight(current, count);
+  if (key === "ArrowUp" || lowerKey === "w") return handleArrowUp(positions, current);
+  if (key === "ArrowDown" || lowerKey === "s") return handleArrowDown(positions, current);
   return null;
 }
 

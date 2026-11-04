@@ -25,8 +25,12 @@ export const validateYouTubeUrl = (raw: string) =>
 export const validateTwitchVodUrl = (raw: string) =>
   validateUrl(raw, (url) => TWITCH_VOD_PATTERN.test(url), "Twitch VOD", "twitch.tv/videos/…");
 
+/** Some tools (e.g. HandBrake) save files the browser reports with a blank or generic type, so the extension also counts. */
+const VIDEO_EXTENSION_PATTERN = /\.(mp4|webm|mov|mkv)$/i;
+
 export function validateVideoFile(file: File): ValidationResult<File> {
-  if (!file.type.startsWith("video/")) return { ok: false, error: "Please choose a video file (MP4, WebM, MOV or MKV)." };
+  // Images, audio and text are clearly not replays; anything else is allowed and the player reports real problems.
+  if (/^(image|audio|text)\//.test(file.type) && !VIDEO_EXTENSION_PATTERN.test(file.name)) return { ok: false, error: "Please choose a video file (MP4, WebM, MOV or MKV)." };
   if (file.size > MAX_VIDEO_FILE_BYTES) return { ok: false, error: "That file is larger than 4 GB." };
   return { ok: true, value: file };
 }

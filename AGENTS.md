@@ -13,9 +13,10 @@
 
 - Keep replay-analysis UI, typed event data, and tests together under `src/features/analysis`; this isolates the core review workflow for testing and rollback.
 - Keep analysis resizing in nested vertical/horizontal panels inside a fixed-height, page-scrollable workspace; this lets the video retain its aspect ratio while the table and notes remain independently resizable.
+- Key panel groups by explicit reset version, not saved dimensions, and resume recreated players from the live playhead; this prevents resizing or resetting from replaying stale seeks.
 - Drive analysis-table headers and cells from shared typed column definitions; this keeps column order, width, visibility, and persistence synchronized.
 - Route all project file I/O through `src/features/analysis/storageAdapter.ts`; it swaps native file pickers for a local workspace store in preview.
-- Keep inline-edit parsing and tag-grid arrow navigation as pure helpers in `src/features/analysis/inlineEditing.ts`; this keeps them unit-testable apart from the UI.
+- Keep inline-edit parsing, timestamp sanitizing/key handling, and tag-grid arrow navigation shared in `src/features/analysis/inlineEditing.ts`; this keeps all timestamp inputs consistent and the pure helpers unit-testable apart from the UI.
 - Capture the undo history and snapshot when a table cell editor opens and rewind to both when it is cancelled; this keeps discarded cell edits out of the undo stack.
 - Video folder at ~/Videos/SmashReplayAnalyzer is defined in storageAdapter.ts; home page hands off imported replays through session storage so the analysis page can pick them up.
 - Route all desktop (Tauri) capabilities through `src/features/desktop/desktopBridge.ts`, with browser fallbacks when a bridge method is missing; this keeps the app runnable in browser preview and tests.

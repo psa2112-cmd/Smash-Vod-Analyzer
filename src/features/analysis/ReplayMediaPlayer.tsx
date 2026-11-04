@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { PlaybackSource } from "./playbackSource";
+import { describeMediaError } from "./mediaErrorMessage";
 
 export interface SeekRequest { time: number; id: number }
 
@@ -9,6 +10,7 @@ interface ReplayMediaPlayerProps {
   playbackRate: number;
   volume: number;
   seekRequest: SeekRequest;
+  initialTime?: number;
   onTimeUpdate: (time: number) => void;
   onDurationChange: (duration: number) => void;
   onEnded: () => void;
@@ -24,8 +26,11 @@ export function ReplayMediaPlayer(props: ReplayMediaPlayerProps) {
 
 const MEDIA_CLASS = "block aspect-video h-full w-auto max-w-full bg-video-letterbox";
 
-function FilePlayer({ url, isPlaying, playbackRate, volume, seekRequest, onTimeUpdate, onDurationChange, onEnded, onError }: ReplayMediaPlayerProps & { url: string }) {
+function FilePlayer({ url, isPlaying, playbackRate, volume, seekRequest, initialTime, onTimeUpdate, onDurationChange, onEnded, onError }: ReplayMediaPlayerProps & { url: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // An old seek is not a new command when Reset layout recreates the player.
+  const appliedSeekId = useRef(seekRequest.id);
+  const resumeTime = useRef(initialTime ?? seekRequest.time);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -34,7 +39,12 @@ function FilePlayer({ url, isPlaying, playbackRate, volume, seekRequest, onTimeU
   }, [isPlaying]);
   useEffect(() => { if (videoRef.current) videoRef.current.playbackRate = playbackRate; }, [playbackRate]);
   useEffect(() => { if (videoRef.current) videoRef.current.volume = volume / 100; }, [volume]);
-  useEffect(() => { if (videoRef.current) videoRef.current.currentTime = seekRequest.time; }, [seekRequest]);
+  useEffect(() => {
+    if (appliedSeekId.current === seekRequest.id) return;
+    appliedSeekId.current = seekRequest.id;
+    resumeTime.current = seekRequest.time;
+    if (videoRef.current) videoRef.current.currentTime = seekRequest.time;
+  }, [seekRequest]);
   return (
     <video
       ref={videoRef}
@@ -43,9 +53,16 @@ function FilePlayer({ url, isPlaying, playbackRate, volume, seekRequest, onTimeU
       className={MEDIA_CLASS}
       playsInline
       onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
-      onLoadedMetadata={(event) => onDurationChange(event.currentTarget.duration)}
+      onLoadedMetadata={(event) => {
+        event.currentTarget.currentTime = resumeTime.current;
+        onDurationChange(event.currentTarget.duration);
+      }}
       onEnded={onEnded}
-      onError={() => onError("This video file can't be played. Try an .mp4 or .webm recording.")}
+      onError={(event) => {
+        const mediaError = event.currentTarget.error;
+        console.error("[ReplayMediaPlayer] video error", { code: mediaError?.code, message: mediaError?.message, src: url });
+        onError(describeMediaError(mediaError));
+      }}
     />
   );
 }
@@ -89,12 +106,12 @@ function loadYouTubeApi(): Promise<YouTubeNamespace> {
 
 const YT_ENDED = 0;
 
-function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, onTimeUpdate, onDurationChange, onEnded, onError }: ReplayMediaPlayerProps & { videoId: string }) {
+function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, initialTime, onTimeUpdate, onDurationChange, onEnded, onError }: ReplayMediaPlayerProps & { videoId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YouTubePlayerInstance | null>(null);
   const pendingSeekRef = useRef<{ targetTime: number; expiresAt: number } | null>(null);
-  const latest = useRef({ isPlaying, playbackRate, volume, seekRequest, onTimeUpdate, onDurationChange, onEnded, onError });
-  latest.current = { isPlaying, playbackRate, volume, seekRequest, onTimeUpdate, onDurationChange, onEnded, onError };
+  const latest = useRef({ isPlaying, playbackRate, volume, seekRequest, initialTime, onTimeUpdate, onDurationChange, onEnded, onError });
+  latest.current = { isPlaying, playbackRate, volume, seekRequest, initialTime, onTimeUpdate, onDurationChange, onEnded, onError };
 
   useEffect(() => {
     let isCancelled = false;
@@ -109,14 +126,17 @@ function YouTubePlayer({ videoId, isPlaying, playbackRate, volume, seekRequest, 
         videoId,
         width: "100%",
         height: "100%",
-        playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, fs: 0, iv_load_policy: 3, cc_load_policy: 0, origin: window.location.origin, start: Math.floor(latest.current.seekRequest.time) },
+        playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, fs: 0, iv_load_policy: 3, cc_load_policy: 0, origin: window.location.origin, start: Math.floor(latest.current.initialTime ?? latest.current.seekRequest.time) },
         events: {
           onReady: () => {
             if (isCancelled) { player.destroy(); return; }
             const state = latest.current;
             player.setPlaybackRate(state.playbackRate);
             player.setVolume(state.volume);
-            player.seekTo(state.seekRequest.time, true);
+            // Resume the live playhead, even if the last explicit seek happened much earlier.
+            const resumeTime = state.initialTime ?? state.seekRequest.time;
+            pendingSeekRef.current = { targetTime: resumeTime, expiresAt: Date.now() + 800 };
+            player.seekTo(resumeTime, true);
             if (state.isPlaying) player.playVideo(); else player.pauseVideo();
             playerRef.current = player;
             state.onDurationChange(player.getDuration());

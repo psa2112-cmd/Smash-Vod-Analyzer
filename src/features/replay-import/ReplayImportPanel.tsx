@@ -1,5 +1,6 @@
 import { useId, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { Upload, Link2, Check, CheckCircle2, AlertCircle, Loader2, X, Film } from "lucide-react";
+import { handleTimestampArrowKey, sanitizeTimestampInput } from "@/features/analysis/inlineEditing";
 import {
   ACCEPTED_VIDEO_TYPES,
   detectLinkPlatform,
@@ -53,7 +54,7 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
 
   // While typing, only keep digits and colons — no reformatting, so the cursor never jumps.
   const handleTimeChange = (event: ChangeEvent<HTMLInputElement>, setTime: (value: string) => void) => {
-    setTime(event.currentTarget.value.replace(/[^\d:]/g, ""));
+    setTime(sanitizeTimestampInput(event.currentTarget.value));
   };
 
   // When the user leaves the field, tidy the time (e.g. "123" becomes "1:23").
@@ -166,6 +167,7 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
                     placeholder="mm:ss or hh:mm:ss"
                     value={startTime}
                     onChange={(e) => handleTimeChange(e, setStartTime)}
+                     onKeyDown={handleTimestampArrowKey}
                     onBlur={(e) => validateTimeOnBlur(e.currentTarget, setStartTime)}
                     className={inputClass(Boolean(clipError))}
                   />
@@ -178,6 +180,7 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
                     placeholder="mm:ss or hh:mm:ss"
                     value={endTime}
                     onChange={(e) => handleTimeChange(e, setEndTime)}
+                     onKeyDown={handleTimestampArrowKey}
                     onBlur={(e) => validateTimeOnBlur(e.currentTarget, setEndTime)}
                     className={inputClass(Boolean(clipError))}
                   />
@@ -198,7 +201,7 @@ export function ReplayImportPanel({ onAnalyze, downloadProgress }: ReplayImportP
           ref={fileInputRef}
           id={ids.file}
           type="file"
-          accept={ACCEPTED_VIDEO_TYPES.join(",")}
+          accept={["video/*", ...ACCEPTED_VIDEO_TYPES, ".mp4", ".webm", ".mov", ".mkv"].join(",")}
           className="sr-only"
           aria-label="Upload video"
           onChange={(e: ChangeEvent<HTMLInputElement>) => {

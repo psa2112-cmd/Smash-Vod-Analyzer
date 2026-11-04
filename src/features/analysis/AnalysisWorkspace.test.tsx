@@ -227,7 +227,12 @@ describe("AnalysisWorkspace", () => {
 });
 
 describe("AnalysisWorkspace save & load", () => {
-  beforeEach(() => window.localStorage.clear());
+  beforeEach(() => {
+    window.localStorage.clear();
+    // jsdom's URL.createObjectURL cannot handle Blob; the save fallback uses it.
+    URL.createObjectURL = vi.fn(() => "blob:mock-url");
+    URL.revokeObjectURL = vi.fn();
+  });
 
   const openFileMenu = async (user: ReturnType<typeof userEvent.setup>) => {
     screen.getByRole("button", { name: /file menu/i }).focus();
@@ -248,8 +253,18 @@ describe("AnalysisWorkspace save & load", () => {
     const user = userEvent.setup();
     render(<AnalysisWorkspace onBack={() => undefined} />);
     await openFileMenu(user);
-    await user.click(screen.getByRole("menuitem", { name: /save/i }));
+    const saveItem = screen.getAllByRole("menuitem").find((item) => item.textContent?.replace(/Ctrl\+S|⌘S/, "").trim() === "Save");
+    expect(saveItem).toBeDefined();
+    await user.click(saveItem!);
     expect(await screen.findByText("Saved Successfully")).toBeInTheDocument();
+  });
+
+  it("saves as a new file from File → Save As", async () => {
+    const user = userEvent.setup();
+    render(<AnalysisWorkspace onBack={() => undefined} />);
+    await openFileMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: /save as/i }));
+    expect(await screen.findByText("Saved As New File")).toBeInTheDocument();
   });
 
   it("does not mark unsaved on playback or seeking", async () => {

@@ -10,7 +10,14 @@ export interface ProjectHandle { id: string; name: string; filePath: string }
 export type OpenProjectResult = ({ ok: true; project: VodProjectFile; handle: ProjectHandle }) | { ok: false; error: string };
 
 interface NativeWritable { write: (data: string) => Promise<void>; close: () => Promise<void> }
-interface NativeFileHandle { name: string; getFile: () => Promise<File>; createWritable: () => Promise<NativeWritable> }
+interface NativeFileHandle {
+  name: string;
+  getFile: () => Promise<File>;
+  createWritable: () => Promise<NativeWritable>;
+  // Browser permission checks (only some browsers offer these).
+  queryPermission?: (descriptor: { mode: "read" | "readwrite" }) => Promise<PermissionState>;
+  requestPermission?: (descriptor: { mode: "read" | "readwrite" }) => Promise<PermissionState>;
+}
 interface NativePickerWindow {
   showSaveFilePicker?: (options: unknown) => Promise<NativeFileHandle>;
   showOpenFilePicker?: (options: unknown) => Promise<NativeFileHandle[]>;
@@ -48,59 +55,126 @@ function downloadProjectFile(fileName: string, contents: string) {
 }
 
 /**
+ * Asks the browser for permission to write to a file the user picked earlier.
+ * Returns true when writing is allowed (or the browser doesn't ask for permission at all).
+ */
+export async function verifyFilePermission(handleName: string): Promise<boolean> {
+  const native = nativeHandles.get(handleName);
+  if (!native?.queryPermission || !native.requestPermission) return true;
+  try {
+    const status = await native.queryPermission({ mode: "readwrite" });
+    if (status === "granted") return true;
+    const request = await native.requestPermission({ mode: "readwrite" });
+    return request === "granted";
+  } catch (error) {
+    console.warn("[storageAdapter] write permission check failed", error);
+    return false;
+  }
+}
+
+/** What happened when we tried to save. "overwrite_failed" means the original file couldn't be written over. */
+export type SaveProjectResult =
+  | { ok: true; handle: ProjectHandle }
+  | { ok: false; reason: "cancelled" }
+  | { ok: false; reason: "overwrite_failed"; suggestedName: string }
+  | { ok: false; reason: "error"; message?: string };
+
+const suggestedFileName = (project: VodProjectFile) => `${slugify(project.replay.title)}${PROJECT_FILE_EXTENSION}`;
+
+/**
  * Saves a project. Three tiers, tried in order:
  * 1. Desktop app: write straight to the file on disk.
  * 2. Modern browser tab: use the browser's "Save As" window, then update that same file on later saves.
- * 3. Fallback: trigger a normal browser download of the .vodproject file.
+ * 3. Fallback: trigger a normal browser download of the .vodproject file (new files / Save As only).
+ * When an existing file can't be written over, nothing is downloaded automatically —
+ * the result is "overwrite_failed" so the workspace can ask the user what to do.
  * Project contents are never kept in browser storage.
  */
-export async function saveProject(project: VodProjectFile, handle: ProjectHandle | null): Promise<ProjectHandle | null> {
+export async function saveProject(
+  project: VodProjectFile,
+  handle: ProjectHandle | null,
+  options?: { forceSaveAs?: boolean },
+): Promise<SaveProjectResult> {
   const contents = serializeProjectFile(project);
-  console.info("[storageAdapter] save start", { filePath: handle?.filePath ?? null, events: project.table.events.length });
+  const forceSaveAs = options?.forceSaveAs ?? false;
+  const existingHandle = forceSaveAs ? null : handle;
+  console.info("[storageAdapter] save start", { filePath: existingHandle?.filePath ?? null, forceSaveAs, events: project.table.events.length });
 
-  // Desktop app: ask where to save (first time only), then write straight to disk.
+  // Tier 1 — desktop app.
   const bridge = getDesktopBridge();
   if (bridge?.saveFileDialog && bridge.writeTextFile) {
-    let filePath = handle?.filePath ?? null;
-    if (!handle) {
-      filePath = await bridge.saveFileDialog({ defaultPath: `${slugify(project.replay.title)}${PROJECT_FILE_EXTENSION}`, filters: DIALOG_FILTERS });
-      if (!filePath) return null; // user cancelled
+    if (existingHandle) {
+      try {
+        await bridge.writeTextFile(existingHandle.filePath, contents);
+        console.info("[storageAdapter] save complete (desktop overwrite)", { filePath: existingHandle.filePath });
+        return { ok: true, handle: existingHandle };
+      } catch (error) {
+        console.warn("[storageAdapter] desktop overwrite failed", error);
+        return { ok: false, reason: "overwrite_failed", suggestedName: nameFromPath(existingHandle.filePath) };
+      }
     }
-    const savedPath = filePath as string;
-    await bridge.writeTextFile(savedPath, contents);
-    return handle ?? { id: createProjectId(), name: nameFromPath(savedPath), filePath: savedPath };
+    const filePath = await bridge.saveFileDialog({ defaultPath: suggestedFileName(project), filters: DIALOG_FILTERS });
+    if (!filePath) return { ok: false, reason: "cancelled" };
+    try {
+      await bridge.writeTextFile(filePath, contents);
+    } catch (error) {
+      console.error("[storageAdapter] desktop write to new file failed", error);
+      return { ok: false, reason: "error", message: "The project could not be written to the chosen location." };
+    }
+    console.info("[storageAdapter] save complete (desktop new file)", { filePath });
+    return { ok: true, handle: { id: createProjectId(), name: nameFromPath(filePath), filePath } };
   }
 
-  // Browser: use the browser's save picker if available, otherwise keep it in local storage.
   const picker = window as unknown as NativePickerWindow;
-  let activeHandle = handle;
-  const existingNative = handle ? nativeHandles.get(handle.filePath) : undefined;
-  if (!activeHandle && picker.showSaveFilePicker) {
+
+  // Overwriting a file the project already has.
+  if (existingHandle) {
+    const nativeHandle = nativeHandles.get(existingHandle.filePath);
+    // Tier 3 environments (preview frame, Safari, Firefox) can't write over a file at all.
+    if (!nativeHandle) {
+      console.warn("[storageAdapter] no write access to the existing file", { filePath: existingHandle.filePath });
+      return { ok: false, reason: "overwrite_failed", suggestedName: existingHandle.filePath };
+    }
+    // Tier 2: ask for write permission, then update the file in place.
+    if (!(await verifyFilePermission(existingHandle.filePath))) {
+      console.warn("[storageAdapter] write permission denied", { filePath: existingHandle.filePath });
+      return { ok: false, reason: "overwrite_failed", suggestedName: existingHandle.filePath };
+    }
     try {
-      const nativeHandle = await picker.showSaveFilePicker({ suggestedName: `${slugify(project.replay.title)}${PROJECT_FILE_EXTENSION}`, types: PICKER_TYPES });
-      activeHandle = { id: createProjectId(), name: nameFromPath(nativeHandle.name), filePath: nativeHandle.name };
-      nativeHandles.set(activeHandle.filePath, nativeHandle);
+      const writable = await nativeHandle.createWritable();
+      await writable.write(contents);
+      await writable.close();
     } catch (error) {
-      if (isAbort(error)) return null;
-      console.warn("[storageAdapter] native save picker unavailable; using workspace storage", error);
+      console.warn("[storageAdapter] writing to the existing file failed", error);
+      nativeHandles.delete(existingHandle.filePath);
+      return { ok: false, reason: "overwrite_failed", suggestedName: existingHandle.filePath };
+    }
+    console.info("[storageAdapter] save complete (overwrite)", { filePath: existingHandle.filePath });
+    return { ok: true, handle: existingHandle };
+  }
+
+  // New file (first save or Save As): try the browser's Save As window first.
+  if (picker.showSaveFilePicker) {
+    try {
+      const freshHandle = await picker.showSaveFilePicker({ suggestedName: suggestedFileName(project), types: PICKER_TYPES });
+      const writable = await freshHandle.createWritable();
+      await writable.write(contents);
+      await writable.close();
+      const newHandle: ProjectHandle = { id: createProjectId(), name: nameFromPath(freshHandle.name), filePath: freshHandle.name };
+      nativeHandles.set(newHandle.filePath, freshHandle);
+      console.info("[storageAdapter] save complete (new file)", { filePath: newHandle.filePath });
+      return { ok: true, handle: newHandle };
+    } catch (error) {
+      if (isAbort(error)) return { ok: false, reason: "cancelled" };
+      console.warn("[storageAdapter] Save As window unavailable; downloading a copy instead", error);
     }
   }
-  if (!activeHandle) {
-    const filePath = `${slugify(project.replay.title)}${PROJECT_FILE_EXTENSION}`;
-    activeHandle = { id: createProjectId(), name: nameFromPath(filePath), filePath };
-  }
-  const nativeHandle = existingNative ?? nativeHandles.get(activeHandle.filePath);
-  if (nativeHandle) {
-    // Tier 2: update the file the user picked, in place.
-    const writable = await nativeHandle.createWritable();
-    await writable.write(contents);
-    await writable.close();
-  } else {
-    // Tier 3: no real file access, so download a copy instead.
-    downloadProjectFile(activeHandle.filePath, contents);
-  }
-  console.info("[storageAdapter] save complete", { filePath: activeHandle.filePath });
-  return activeHandle;
+
+  // Tier 3: no real file access, so download a copy.
+  const filePath = suggestedFileName(project);
+  downloadProjectFile(filePath, contents);
+  console.info("[storageAdapter] save complete (download)", { filePath });
+  return { ok: true, handle: { id: createProjectId(), name: nameFromPath(filePath), filePath } };
 }
 
 export function openProjectText(text: string, filePath: string, id: string = createProjectId()): OpenProjectResult {

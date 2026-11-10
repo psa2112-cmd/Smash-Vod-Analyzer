@@ -1,6 +1,6 @@
 // The fixed choices for the three multi-select columns. An empty list means "(blank)".
-export const GAMESTATE_OPTIONS = ["Combo", "Juggling", "Recovery", "Edgeguard", "Ledgetrap", "Corner Pressure", "Techchase", "Shield Pressure"] as const;
-export const POSITION_OPTIONS = ["Neutral", "Advantage", "Disadvantage"] as const;
+export const GAMESTATE_OPTIONS = ["Combo", "Juggle", "Recovery", "Edgeguard", "Ledgetrap", "Corner Pressure", "Techchase", "Shield Pressure", "Anti-air"] as const;
+export const POSITION_OPTIONS = ["Neutral", "Advantage", "Disadvantage", "Scramble"] as const;
 export const TAG_OPTIONS = ["Successful", "Failed", "Even", "Good", "Bad", "Kill", "Flag", "Auto-populated"] as const;
 
 export interface AnalysisEvent {

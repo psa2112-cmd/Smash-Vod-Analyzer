@@ -1,5 +1,8 @@
 # Analysis workspace refinements
 
+## Event metadata update
+- [x] Add Anti-air and Scramble, rename Juggling to Juggle, update manual-event grids, and verify legacy project loading with focused tests.
+
 ## Playback during resizing
 - [ ] Keep the video mounted during panel resizing and preserve Reset layout.
 - [ ] Resume remounted players at the current playhead and verify explicit seeking.

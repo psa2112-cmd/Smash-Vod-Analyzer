@@ -11,6 +11,10 @@
 
 ## Project architecture
 
+- Use the shared Button tag variant for unselected analysis chips and neutral tag-cell triggers; this separates hover focus from selected-state fill without changing other controls.
+
+- Normalize renamed gamestates in both events and saved filters when parsing project files; this preserves selections and filtered rows in older projects.
+
 - Keep replay-analysis UI, typed event data, and tests together under `src/features/analysis`; this isolates the core review workflow for testing and rollback.
 - Keep analysis resizing in nested vertical/horizontal panels inside a fixed-height, page-scrollable workspace; this lets the video retain its aspect ratio while the table and notes remain independently resizable.
 - Key panel groups by explicit reset version, not saved dimensions, and resume recreated players from the live playhead; this prevents resizing or resetting from replaying stale seeks.

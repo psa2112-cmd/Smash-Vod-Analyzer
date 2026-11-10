@@ -28,6 +28,31 @@ const recent = (index: number): RecentProject => ({
 });
 
 describe("project file", () => {
+  it.each(["multi-select", "legacy"])("normalizes Juggling in %s events without losing other data", (format) => {
+    const event = {
+      id: "juggle-event", character: null, timestamp: 42, damage: null,
+      tags: ["Good"], note: "Keep this note", secondsSincePrevious: null,
+      ...(format === "legacy" ? { eventType: "Juggling" } : { gamestate: ["Juggling", "Anti-air"], position: ["Scramble"] }),
+    };
+    const base = sampleProject();
+    const result = parseProjectFile(JSON.stringify({ ...base, table: { ...base.table, events: [event] } }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.project.table.events[0]).toMatchObject({
+      gamestate: format === "legacy" ? ["Juggle"] : ["Juggle", "Anti-air"],
+      position: format === "legacy" ? [] : ["Scramble"],
+      tags: ["Good"], note: "Keep this note", timestamp: 42,
+    });
+  });
+
+  it("normalizes saved Juggling filters so migrated events stay visible", () => {
+    const base = sampleProject();
+    const result = parseProjectFile(JSON.stringify({ ...base, table: { ...base.table, filters: { ...base.table.filters, gamestateFilter: ["Juggling", "Anti-air"] } } }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.project.table.filters.gamestateFilter).toEqual(["Juggle", "Anti-air"]);
+  });
+
   it("round-trips a project through serialization", () => {
     const project = sampleProject();
     expect(project.version).toBe(PROJECT_SCHEMA_VERSION);

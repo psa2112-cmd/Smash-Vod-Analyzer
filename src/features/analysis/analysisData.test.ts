@@ -13,7 +13,7 @@ import {
 const events: AnalysisEvent[] = [
   {
     id: "late-hit",
-    gamestate: ["Juggling"], position: ["Disadvantage"],
+    gamestate: ["Juggle"], position: ["Disadvantage"],
     character: "Mario",
     timestamp: 92,
     damage: 18.4,

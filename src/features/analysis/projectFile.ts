@@ -78,12 +78,15 @@ function isAnalysisEvent(value: unknown): boolean {
 }
 
 /** Upgrades an event from an older file: keeps a legacy event type only if it's a valid gamestate. */
+const normalizeGamestate = (value: string): string => value === "Juggling" ? "Juggle" : value;
+
 function upgradeEvent(value: Json): AnalysisEvent {
   const { eventType, ...rest } = value;
-  const legacyGamestate = typeof eventType === "string" && (GAMESTATE_OPTIONS as readonly string[]).includes(eventType) ? [eventType] : [];
+  const normalizedEventType = typeof eventType === "string" ? normalizeGamestate(eventType) : eventType;
+  const legacyGamestate = typeof normalizedEventType === "string" && (GAMESTATE_OPTIONS as readonly string[]).includes(normalizedEventType) ? [normalizedEventType] : [];
   return {
     ...(rest as unknown as AnalysisEvent),
-    gamestate: isStringList(value["gamestate"]) ? value["gamestate"] : legacyGamestate,
+    gamestate: (isStringList(value["gamestate"]) ? value["gamestate"] : legacyGamestate).map(normalizeGamestate),
     position: isStringList(value["position"]) ? value["position"] : [],
   };
 }
@@ -144,7 +147,7 @@ export function parseProjectFile(text: string): ParseProjectResult {
     replay: { videoPath: replay["videoPath"], title: replay["title"], ...(originalUrl !== undefined ? { originalUrl } : {}), ...(clipRange ? { clipRange } : {}) },
     events: (table["events"] as Json[]).map(upgradeEvent),
     sorts: table["sorts"],
-    filters: { ...table["filters"], quickFilter: ["all", "untagged", "high-damage"].includes(table["filters"].quickFilter) ? table["filters"].quickFilter : "all" },
+    filters: { ...table["filters"], gamestateFilter: (table["filters"].gamestateFilter ?? []).map(normalizeGamestate), quickFilter: ["all", "untagged", "high-damage"].includes(table["filters"].quickFilter) ? table["filters"].quickFilter : "all" },
     columnPreferences: normalizeTablePreferences(table["columnPreferences"]),
     notes,
     session: { currentTimestamp: Math.max(0, session["currentTimestamp"]), selectedRowId: session["selectedRowId"] as string | null },

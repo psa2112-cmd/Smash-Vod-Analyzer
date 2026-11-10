@@ -209,7 +209,11 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
   const [isManualEventOpen, setIsManualEventOpenState] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const wasPlayingBeforeManualEventRef = useRef(false);
-  /** Pauses playback while the add-event screen is open and restores the prior play state on close. */
+  const EMPTY_MANUAL_SELECTIONS: Record<MultiSelectField, string[]> = { gamestate: [], position: [], tags: [] };
+  /**
+   * Pauses playback while the add-event screen is open and restores the prior play state on close.
+   * Closing without saving also resets the note and chip selections so the next open starts clean.
+   */
   const setIsManualEventOpen = (shouldOpen: boolean) => {
     if (shouldOpen === isManualEventOpen) return;
     if (shouldOpen) {
@@ -218,10 +222,11 @@ export function AnalysisWorkspace({ onBack, onUnsavedChange, blockedNavigation =
     } else {
       if (wasPlayingBeforeManualEventRef.current) setIsPlaying(true);
       wasPlayingBeforeManualEventRef.current = false;
+      setManualNote("");
+      setManualSelections(EMPTY_MANUAL_SELECTIONS);
     }
     setIsManualEventOpenState(shouldOpen);
   };
-  const EMPTY_MANUAL_SELECTIONS: Record<MultiSelectField, string[]> = { gamestate: [], position: [], tags: [] };
   const [manualNote, setManualNote] = useState("");
   // Gamestate, position and tags chosen in the Add event box.
   const [manualSelections, setManualSelections] = useState<Record<MultiSelectField, string[]>>(EMPTY_MANUAL_SELECTIONS);
@@ -1582,7 +1587,7 @@ function TableHeader({ column, sorts, onSort, onResize, onDragStart, onDrop, fil
                   <Button
                     key={tag}
                     type="button"
-                    variant={activeFilter.includes(tag) ? "default" : "outline"}
+                    variant={activeFilter.includes(tag) ? "default" : "tag"}
                     aria-pressed={activeFilter.includes(tag)}
                     size="sm"
                     className="h-6 px-1.5 text-[10px]"
@@ -1658,8 +1663,14 @@ interface CellEditingProps {
 
 function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBeginTextEdit, onCommitTextEdit, activeColumnId, isEditing, registerCell, onCellFocus, onCellKeyDown, onStartEdit, onEndEdit, onCancelCellEdit }: { event: AnalysisEvent; columns: TableColumnDefinition[]; selected: boolean; onJump: () => void; onUpdate: (updates: Partial<AnalysisEvent>, mode?: "action" | "text") => void; onDelete: () => void; onBeginTextEdit: () => void; onCommitTextEdit: () => void } & CellEditingProps) {
   const isCellEditing = (columnId: TableColumnId) => isEditing && activeColumnId === columnId;
-  const noteRef = useFocusWhenEditing<HTMLInputElement>(isCellEditing("note"));
+  const noteRef = useFocusWhenEditing<HTMLTextAreaElement>(isCellEditing("note"));
   const originalNoteRef = useRef(event.note);
+  useEffect(() => {
+    if (noteRef.current) {
+      noteRef.current.style.height = "auto";
+      noteRef.current.style.height = `${noteRef.current.scrollHeight}px`;
+    }
+  }, [event.note, isEditing, activeColumnId]);
   const textCellProps = (columnId: TableColumnId) => ({ editing: isCellEditing(columnId), onStartEdit: () => onStartEdit(columnId), onEndEdit });
   const cellForColumn = (columnId: TableColumnId) => {
     switch (columnId) {
@@ -1678,14 +1689,14 @@ function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBegi
         </div>
       );
       case "damage": return <InlineTextCell {...textCellProps("damage")} label={`damage at ${formatTimestamp(event.timestamp)}`} inputClassName="font-mono" initialValue={event.damage === null ? "" : event.damage.toFixed(1)} display={<span className="font-mono">{event.damage === null ? "—" : `${event.damage.toFixed(1)}%`}</span>} onCommit={(value) => onUpdate({ damage: parseDamageInput(value) })} />;
-      case "note": return <input ref={noteRef} aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true"
+      case "note": return <textarea ref={noteRef} rows={1} aria-label={`Edit note at ${formatTimestamp(event.timestamp)}`} value={event.note} data-row-note="true"
         onFocus={() => { originalNoteRef.current = event.note; onBeginTextEdit(); }}
         onBlur={() => { onCommitTextEdit(); onEndEdit(false); }}
         onKeyDown={(keyEvent) => {
-          if (keyEvent.key === "Enter") { keyEvent.preventDefault(); onEndEdit(true); }
+          if (keyEvent.key === "Enter" && !keyEvent.shiftKey) { keyEvent.preventDefault(); onEndEdit(true); }
           else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); if (event.note !== originalNoteRef.current) onUpdate({ note: originalNoteRef.current }, "text"); onEndEdit(true); }
         }}
-        onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value }, "text")} className="h-7 w-full min-w-0 rounded border border-transparent bg-transparent px-2 text-xs outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
+        onChange={(changeEvent) => onUpdate({ note: changeEvent.target.value }, "text")} className="min-h-[1.75rem] w-full min-w-0 resize-none overflow-hidden rounded border border-transparent bg-transparent px-2 py-1 text-xs leading-relaxed outline-none hover:border-border focus:border-primary focus:bg-input/40" />;
       case "secondsSincePrevious": return <span className="font-mono text-muted-foreground">{event.secondsSincePrevious === null ? "—" : `${event.secondsSincePrevious.toFixed(1)}s`}</span>;
     }
   };
@@ -1697,7 +1708,7 @@ function EventRow({ event, columns, selected, onJump, onUpdate, onDelete, onBegi
           <td key={column.id} ref={(element) => registerCell(column.id, element)} tabIndex={isActiveCell ? 0 : -1} aria-selected={isActiveCell}
             onFocus={(focusEvent) => onCellFocus(column.id, focusEvent.target === focusEvent.currentTarget)}
             onKeyDown={(keyEvent) => { if (keyEvent.target === keyEvent.currentTarget) onCellKeyDown(keyEvent, column.id); }}
-            className={cn("overflow-hidden px-3 py-2 align-middle outline-none", isActiveCell && "rounded-sm ring-2 ring-inset ring-primary")}>
+            className={cn("overflow-hidden px-3 py-2 align-top outline-none", isActiveCell && "rounded-sm ring-2 ring-inset ring-primary")}>
             {cellForColumn(column.id)}
           </td>
         );
@@ -1763,12 +1774,12 @@ function InlineTagList({ values, options, placeholder, editing, ariaLabel, onSta
         else if (keyEvent.key === "Escape") { keyEvent.preventDefault(); keyEvent.stopPropagation(); onCancel(); }
       }}>
       {options.map((tag, index) => (
-        <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} variant={tags.includes(tag) ? "default" : "ghost"} aria-pressed={tags.includes(tag)} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => toggleTag(index)}>{tag}</Button>
+        <Button key={tag} ref={(element) => { tagRefs.current[index] = element; }} onKeyDown={(keyEvent) => onTagKeyDown(keyEvent, index)} variant={tags.includes(tag) ? "default" : "tag"} aria-pressed={tags.includes(tag)} size="sm" className="h-6 px-1.5 text-[10px]" onClick={() => toggleTag(index)}>{tag}</Button>
       ))}
       <Button variant="ghost" size="icon" className="size-6" onClick={() => onEndEdit(true)} aria-label={`Close ${ariaLabel.replace(/^Edit /, "")} editor`}><X /></Button>
     </div>
   ) : (
-    <Button variant="ghost" className="h-auto min-h-7 w-full justify-start whitespace-normal px-1 py-1" onClick={onStartEdit} aria-label={ariaLabel}>
+    <Button variant="tag" className="h-auto min-h-7 w-full justify-start whitespace-normal rounded border-transparent bg-transparent px-1 py-1 text-left shadow-none hover:border-border" onClick={onStartEdit} aria-label={ariaLabel}>
       <span className="flex flex-wrap gap-1">{tags.length ? tags.map((tag) => <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px]">{tag}</Badge>) : <span className="text-xs text-muted-foreground">{placeholder}</span>}</span>
     </Button>
   );
@@ -1822,8 +1833,8 @@ function NumberFilter({ label, value, onChange }: { label: string; value: number
 }
 
 const CHIP_GRID_CLASS: Partial<Record<MultiSelectField, string>> = {
-  gamestate: "grid grid-cols-4 gap-1.5",
-  position: "grid grid-cols-3 gap-1.5",
+  gamestate: "grid grid-cols-3 gap-1.5",
+  position: "grid grid-cols-4 gap-1.5",
   tags: "grid grid-cols-3 gap-1.5",
 };
 
@@ -1878,7 +1889,7 @@ function ManualEventDialog({ open, timestamp, note, selections, onOpenChange, on
           {MULTI_SELECT_FIELD_IDS.map((field) => (
             <fieldset key={field}><legend className="mb-2 text-xs font-medium text-muted-foreground">{MULTI_SELECT_FIELDS[field].label}</legend><div className={CHIP_GRID_CLASS[field] ?? "flex flex-wrap gap-1.5"}>
               {chips.map((chip, index) => chip.field !== field ? null : (
-                <Button key={chip.option} ref={(element) => { chipRefs.current[index] = element; }} onKeyDown={(keyEvent) => onChipKeyDown(keyEvent, index)} type="button" variant={selections[field].includes(chip.option) ? "default" : "outline"} aria-pressed={selections[field].includes(chip.option)} size="sm" className={CHIP_GRID_CLASS[field] ? "w-full min-w-0 whitespace-normal" : undefined} onClick={() => toggleChip(index)}>{chip.option}</Button>
+                <Button key={chip.option} ref={(element) => { chipRefs.current[index] = element; }} onKeyDown={(keyEvent) => onChipKeyDown(keyEvent, index)} type="button" variant={selections[field].includes(chip.option) ? "default" : "tag"} aria-pressed={selections[field].includes(chip.option)} size="sm" className={cn(CHIP_GRID_CLASS[field] ? "w-full min-w-0 whitespace-normal" : undefined)} onClick={() => toggleChip(index)}>{chip.option}</Button>
               ))}
             </div></fieldset>
           ))}

@@ -153,6 +153,24 @@ function SiteHeader() {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
+  useEffect(() => {
+    const handleKeyDown = () => {
+      document.body.classList.add("using-keyboard");
+    };
+    const handleMouseMove = () => {
+      document.body.classList.remove("using-keyboard");
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("mousemove", handleMouseMove);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("mousemove", handleMouseMove);
+      document.body.classList.remove("using-keyboard");
+    };
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <SiteHeader />

@@ -12,6 +12,7 @@
 ## Project architecture
 
 - Use the shared Button tag variant for unselected analysis chips and neutral tag-cell triggers; this separates hover focus from selected-state fill without changing other controls.
+- Track keyboard/mouse input in the root layout and scope tag-button hover styles to mouse mode; this prevents stationary-pointer hover rings from competing with keyboard focus.
 
 - Normalize renamed gamestates in both events and saved filters when parsing project files; this preserves selections and filtered rows in older projects.
 
